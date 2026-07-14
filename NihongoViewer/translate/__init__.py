@@ -1,0 +1,43 @@
+"""Translation pipeline stage — backends behind a common `Translator` ABC.
+
+`create_translator()` returns the configured backend wrapped in a `FuzzyCache`
+(the near-identical-source caching CLAUDE.md requires), so callers get caching
+for free without knowing about it.
+"""
+
+from .base import Translator
+from .cache import FuzzyCache
+
+# name -> "module:ClassName" (kept as strings so `import translate` stays cheap;
+# ctranslate2 is only imported when a backend is actually created).
+_BACKENDS = {
+    "MADLAD-400": ("madlad", "MadladTranslator"),  # default — most fluent (Apache-2.0)
+}
+
+#: Translation backend used by default.
+DEFAULT_BACKEND = "MADLAD-400"
+
+
+def available_backends() -> list[str]:
+    return list(_BACKENDS)
+
+
+def create_translator(name: str = DEFAULT_BACKEND, *, cache: bool = True) -> Translator:
+    """Instantiate a translation backend (weights load lazily), fuzzy-cached."""
+    if name not in _BACKENDS:
+        raise ValueError(f"Unknown translator {name!r}; expected one of {available_backends()}")
+    import importlib
+
+    module_name, class_name = _BACKENDS[name]
+    module = importlib.import_module(f"{__name__}.{module_name}")
+    backend = getattr(module, class_name)()
+    return FuzzyCache(backend) if cache else backend
+
+
+__all__ = [
+    "Translator",
+    "FuzzyCache",
+    "available_backends",
+    "create_translator",
+    "DEFAULT_BACKEND",
+]

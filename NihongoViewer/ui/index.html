@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NihongoViewer</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="layout">
+    <!-- Left navigation rail -->
+    <aside class="sidebar">
+      <nav class="side-nav" id="side-nav">
+        <button class="nav-item active" data-page="capture">
+          <svg viewBox="0 0 24 24" class="nav-ico" aria-hidden="true">
+            <path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"/>
+            <circle cx="12" cy="13" r="3.2"/>
+          </svg>
+          <span>Capture</span>
+        </button>
+        <button class="nav-item" data-page="create">
+          <svg viewBox="0 0 24 24" class="nav-ico" aria-hidden="true">
+            <rect x="3" y="5" width="18" height="14" rx="2"/>
+            <path d="M7 9h6M7 13h10M7 16h4"/>
+          </svg>
+          <span>Create card</span>
+        </button>
+        <button class="nav-item" data-page="mycard">
+          <svg viewBox="0 0 24 24" class="nav-ico" aria-hidden="true">
+            <path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2V4Z"/>
+            <path d="M18 20a2 2 0 0 0 2-2V8"/>
+            <path d="M8 8h7M8 11h7"/>
+          </svg>
+          <span>My card</span>
+        </button>
+      </nav>
+    </aside>
+
+    <!-- Content area -->
+    <div class="content">
+      <!-- Title bar -->
+      <header class="titlebar">
+        <span class="logo">文<span class="logo-a">A</span></span>
+        <h1>NihongoViewer</h1>
+      </header>
+
+      <!-- =============================== CAPTURE ============================ -->
+      <div class="page active" id="page-capture">
+        <!-- Main two-column area -->
+        <main class="main">
+          <!-- CAPTURE -->
+          <section class="panel capture">
+            <h2 class="panel-title">CAPTURE</h2>
+            <div class="capture-controls">
+              <select id="window-select" class="grow">
+                <option value="">Loading windows…</option>
+              </select>
+              <button class="btn start" id="start-btn">Start</button>
+              <button class="btn icon" id="refresh-btn" title="Refresh window list">⟳</button>
+            </div>
+            <div class="preview-screen">
+              <span class="no-preview" id="no-preview">No preview</span>
+              <img id="preview-img" alt="Window preview" hidden />
+            </div>
+            <a class="link" href="#" id="configure-ocr">⚙ Configure OCR</a>
+          </section>
+
+          <!-- SETTING -->
+          <section class="panel setting">
+            <h2 class="panel-title">SETTING</h2>
+
+            <label class="field-label">OCR engine</label>
+            <div class="toggle-group" id="ocr-engine" data-group="ocr">
+              <button class="toggle active" data-engine="MeikiOCR">MeikiOCR</button>
+              <button class="toggle" data-engine="MangaOCR">MangaOCR</button>
+            </div>
+
+            <label class="field-label">Hide / show hotkey</label>
+            <div class="hotkey-row">
+              <input class="input" type="text" id="hotkey-input" value="Ctrl + Shift + H"
+                     placeholder="Click here, then press a key combo" />
+              <button class="btn hotkey-save" id="hotkey-save" disabled>Save</button>
+            </div>
+            <span class="field-hint" id="hotkey-status"></span>
+
+            <div class="row">
+              <div class="col">
+                <label class="field-label">Font</label>
+                <select id="font-select">
+                  <option>Noto Sans JP</option>
+                  <option>M PLUS Rounded 1c</option>
+                  <option>Shippori Mincho</option>
+                </select>
+              </div>
+              <div class="col">
+                <label class="field-label">Size <span id="size-val">14</span>pt</label>
+                <input class="slider" type="range" min="8" max="48" value="14" id="size-slider" />
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="col">
+                <label class="field-label">Text color</label>
+                <button class="color-swatch" type="button" id="text-color"
+                        data-value="#ffffff" aria-label="Text color"></button>
+              </div>
+              <div class="col">
+                <label class="field-label">Background</label>
+                <button class="color-swatch" type="button" id="bg-color"
+                        data-value="#111111" aria-label="Background color"></button>
+              </div>
+            </div>
+
+            <label class="field-label">Opacity <span id="opacity-val">80</span>%</label>
+            <input class="slider" type="range" min="0" max="100" value="80" id="opacity-slider" />
+
+            <div class="row">
+              <div class="col">
+                <label class="field-label">Position offset X/Y (px)</label>
+                <div class="row tight">
+                  <input class="input" type="number" value="0" step="1" id="offset-x"
+                         placeholder="X" title="Horizontal offset in pixels (+right / −left)" />
+                  <input class="input" type="number" value="0" step="1" id="offset-y"
+                         placeholder="Y" title="Vertical offset in pixels (+up / −down)" />
+                </div>
+              </div>
+              <div class="col">
+                <label class="field-label">Text mode</label>
+                <div class="toggle-group" id="text-mode" data-group="mode">
+                  <button class="toggle active" data-mode="single">Single</button>
+                  <button class="toggle" data-mode="duo">Duo</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
+
+        <!-- TEXT -->
+        <section class="panel text-panel">
+          <div class="text-header">
+            <h2 class="panel-title">TEXT</h2>
+            <div class="engines">
+              <span class="dot" id="ocr-status">● OCR: MeikiOCR</span>
+              <span class="dot" id="tr-status">● MADLAD-400</span>
+            </div>
+          </div>
+          <div class="text-boxes">
+            <div class="text-box">
+              <span class="text-tag">Detected (JA)</span>
+              <p class="jp" id="detected-ja">今日はいい天気ですね。</p>
+            </div>
+            <div class="text-box">
+              <span class="text-tag">Translated (EN)</span>
+              <p class="en" id="translated-en">The weather is nice today, isn't it.</p>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- ============================= CREATE CARD ========================== -->
+      <div class="page" id="page-create">
+        <div class="deck-row">
+          <label class="deck-row-label">Deck</label>
+          <select id="create-deck-select" class="grow">
+            <option>MyDeck</option>
+          </select>
+          <button class="btn furigana-toggle active" id="furigana-toggle-create"
+                  type="button" aria-pressed="true"
+                  title="Show kana readings over kanji">
+            <span class="furi-mark">あ</span> Furigana
+          </button>
+          <button class="btn" id="new-deck-btn">＋ New deck</button>
+        </div>
+
+        <div class="create-grid">
+          <!-- Image / capture column -->
+          <div class="create-media">
+            <div class="media-wrap">
+              <div class="media-box" id="create-media-box">
+                <svg viewBox="0 0 24 24" class="media-ico" aria-hidden="true">
+                  <rect x="3" y="4" width="18" height="16" rx="2"/>
+                  <circle cx="8.5" cy="9.5" r="1.6"/>
+                  <path d="M4 18l5-5 4 4 3-3 4 4"/>
+                </svg>
+              </div>
+              <!-- Passive capture-status readout (NOT a button) -->
+              <span class="status-badge idle" id="capture-status-badge">Start capture first</span>
+            </div>
+            <button class="btn capture-card-btn" id="create-capture-btn">
+              <svg viewBox="0 0 24 24" class="btn-ico" aria-hidden="true">
+                <path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"/>
+                <circle cx="12" cy="13" r="3.2"/>
+              </svg>
+              Capture frame
+            </button>
+            <button class="btn upload-btn" id="create-upload-btn">
+              <svg viewBox="0 0 24 24" class="btn-ico" aria-hidden="true">
+                <path d="M12 16V5M8 9l4-4 4 4M5 19h14"/>
+              </svg>
+              Upload image
+            </button>
+            <span class="field-hint upload-note">Drag &amp; drop, paste, or upload</span>
+            <input type="file" id="create-upload-input" accept="image/*" hidden />
+            <span class="field-hint" id="capture-hint"></span>
+          </div>
+
+          <!-- Fields column -->
+          <div class="create-fields">
+            <div class="field-group">
+              <div class="group-title">Vocabulary</div>
+              <div class="row">
+                <div class="col">
+                  <label class="field-label">Word</label>
+                  <input class="input" type="text" id="card-word" placeholder="天気" />
+                  <div class="furigana-preview" id="card-word-furi" hidden></div>
+                </div>
+                <div class="col">
+                  <div class="field-head">
+                    <label class="field-label">Translated word</label>
+                    <button class="mini-btn" type="button" id="translate-word-btn"
+                            title="Translate the Word with MADLAD-400">
+                      <svg viewBox="0 0 24 24" class="mini-ico" aria-hidden="true">
+                        <path d="M4 5h7M8 4v1.5M9.5 5c0 4-2.5 6.5-5.5 7.5M6.5 8.5c0 2 2.5 3.5 5 4"/>
+                        <path d="M13.5 19l3.5-8 3.5 8M15 16h5"/>
+                      </svg>
+                      <span class="mini-label">Translate</span>
+                    </button>
+                  </div>
+                  <input class="input" type="text" id="card-word-tr" placeholder="weather" />
+                </div>
+              </div>
+            </div>
+
+            <div class="field-group">
+              <div class="group-title">Context</div>
+              <label class="field-label">Sentence</label>
+              <textarea class="input textarea" id="card-sentence" rows="3"
+                        placeholder="今日はいい天気ですね。"></textarea>
+              <div class="furigana-preview" id="card-sentence-furi" hidden></div>
+
+              <div class="field-head">
+                <label class="field-label">Translated sentence</label>
+                <button class="mini-btn" type="button" id="translate-sentence-btn"
+                        title="Translate the Sentence with MADLAD-400">
+                  <svg viewBox="0 0 24 24" class="mini-ico" aria-hidden="true">
+                    <path d="M4 5h7M8 4v1.5M9.5 5c0 4-2.5 6.5-5.5 7.5M6.5 8.5c0 2 2.5 3.5 5 4"/>
+                    <path d="M13.5 19l3.5-8 3.5 8M15 16h5"/>
+                  </svg>
+                  <span class="mini-label">Translate</span>
+                </button>
+              </div>
+              <textarea class="input textarea" id="card-sentence-tr" rows="3"
+                        placeholder="The weather is nice today, isn't it."></textarea>
+
+              <label class="field-label">Note</label>
+              <textarea class="input textarea" id="card-note" rows="3"
+                        placeholder="Optional notes, mnemonics, grammar points…"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div class="create-actions">
+          <span class="field-hint" id="save-hint"></span>
+          <button class="btn" id="card-clear-btn">Clear</button>
+          <button class="btn start" id="card-save-btn">Save card</button>
+        </div>
+      </div>
+
+      <!-- ============================== MY CARD ============================= -->
+      <div class="page" id="page-mycard">
+        <!-- Sub-view: deck list -->
+        <div class="mycard-view active" id="view-decks">
+          <div class="list-toolbar">
+            <h2 class="panel-title" style="margin:0;">DECKS</h2>
+            <input class="input list-search" type="text" id="deck-search"
+                   placeholder="Search decks…" autocomplete="off" />
+          </div>
+          <div class="deck-grid" id="deck-list"></div>
+        </div>
+
+        <!-- Sub-view: cards inside a deck -->
+        <div class="mycard-view" id="view-deck">
+          <div class="card-detail-head">
+            <div class="crumb-row">
+              <button class="btn back-btn" id="deck-back-btn" title="Back to decks">‹ Back</button>
+              <nav class="crumbs">
+                <a href="#" class="crumb" data-goto="decks">Decks</a>
+                <span class="crumb-sep">›</span>
+                <span class="crumb current" id="deck-crumb">MyDeck</span>
+                <span class="deck-count-inline" id="deck-count-inline"></span>
+              </nav>
+            </div>
+            <button class="btn" id="deck-export-btn">
+              <svg viewBox="0 0 24 24" class="btn-ico" aria-hidden="true">
+                <path d="M12 4v10M8 11l4 4 4-4M5 20h14"/>
+              </svg>
+              Export Anki deck
+            </button>
+          </div>
+          <div class="list-toolbar">
+            <input class="input list-search" type="text" id="card-search"
+                   placeholder="Search word, reading, or sentence…" autocomplete="off" />
+            <select class="input list-sort" id="card-sort" title="Sort cards">
+              <option value="recent">Recent</option>
+              <option value="oldest">Oldest</option>
+              <option value="az">A → Z</option>
+            </select>
+          </div>
+          <div class="card-list" id="card-list">
+            <div class="empty-state">No cards yet.</div>
+          </div>
+        </div>
+
+        <!-- Sub-view: single card detail -->
+        <div class="mycard-view" id="view-card">
+          <div class="card-detail-head">
+            <div class="crumb-row">
+              <button class="btn back-btn" id="card-back-btn" title="Back to the deck">‹ Back</button>
+              <nav class="crumbs">
+                <a href="#" class="crumb" data-goto="decks">Decks</a>
+                <span class="crumb-sep">›</span>
+                <a href="#" class="crumb" data-goto="deck" id="card-crumb-deck">MyDeck</a>
+                <span class="crumb-sep">›</span>
+                <span class="crumb current" id="card-crumb">天気</span>
+              </nav>
+            </div>
+            <div class="card-nav">
+              <button class="btn furigana-toggle active" id="furigana-toggle-detail"
+                      type="button" aria-pressed="true"
+                      title="Show kana readings over kanji">
+                <span class="furi-mark">あ</span> Furigana
+              </button>
+              <button class="btn" id="card-prev-btn">‹ Previous</button>
+              <span class="card-pos" id="card-pos">1 / 1</span>
+              <button class="btn" id="card-next-btn">Next ›</button>
+              <button class="btn toggle-edit" id="card-edit-btn">✎ Edit</button>
+              <button class="btn danger" id="card-delete-btn">🗑 Delete</button>
+              <button class="btn" id="card-cancel-btn" hidden>Cancel</button>
+              <button class="btn start" id="card-save-edit-btn" hidden>✔ Save</button>
+            </div>
+          </div>
+          <span class="field-hint" id="detail-hint"></span>
+
+          <div class="create-grid">
+            <div class="create-media">
+              <div class="media-box" id="detail-media-box">
+                <svg viewBox="0 0 24 24" class="media-ico" aria-hidden="true">
+                  <rect x="3" y="4" width="18" height="16" rx="2"/>
+                  <circle cx="8.5" cy="9.5" r="1.6"/>
+                  <path d="M4 18l5-5 4 4 3-3 4 4"/>
+                </svg>
+              </div>
+              <button class="btn upload-btn" id="detail-upload-btn" hidden>
+                <svg viewBox="0 0 24 24" class="btn-ico" aria-hidden="true">
+                  <path d="M12 16V5M8 9l4-4 4 4M5 19h14"/>
+                </svg>
+                Upload image
+              </button>
+              <span class="field-hint upload-note" id="upload-note" hidden>Drag &amp; drop, paste, or upload</span>
+              <input type="file" id="detail-upload-input" accept="image/*" hidden />
+              <div class="card-meta" id="card-meta">
+                <span class="meta-chip" id="meta-deck"></span>
+                <span class="meta-date" id="meta-date"></span>
+              </div>
+            </div>
+
+            <div class="create-fields">
+              <div class="row">
+                <div class="col">
+                  <label class="field-label">Word</label>
+                  <input class="input" type="text" id="detail-word" readonly />
+                  <div class="furigana-preview" id="detail-word-furi" hidden></div>
+                </div>
+                <div class="col">
+                  <label class="field-label">Translated word</label>
+                  <input class="input" type="text" id="detail-word-tr" readonly />
+                </div>
+              </div>
+
+              <label class="field-label">Sentence</label>
+              <textarea class="input textarea" id="detail-sentence" rows="2" readonly></textarea>
+              <div class="furigana-preview" id="detail-sentence-furi" hidden></div>
+
+              <label class="field-label">Translated sentence</label>
+              <textarea class="input textarea" id="detail-sentence-tr" rows="2" readonly></textarea>
+
+              <label class="field-label">Note</label>
+              <textarea class="input textarea" id="detail-note" rows="2" placeholder="No notes" readonly></textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- OCR speed dialog (opened by "Configure OCR") -->
+  <div class="modal-backdrop" id="ocr-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ocr-modal-title">
+      <h3 class="modal-title" id="ocr-modal-title">⚙ OCR Speed</h3>
+      <p class="modal-sub">
+        How hard should OCR work each frame? Faster reads less detail and uses less
+        CPU; higher quality reads small text better but takes longer per frame.
+        Applies to whichever engine is active.
+      </p>
+      <div class="speed-options" id="speed-options">
+        <button class="speed-opt" type="button" data-speed="fast">
+          <b>Fast</b><span>Quickest, lightest on CPU. May miss small or faint text.</span>
+        </button>
+        <button class="speed-opt" type="button" data-speed="balanced">
+          <b>Balanced <em>· default</em></b><span>A good mix of speed and accuracy for most games.</span>
+        </button>
+        <button class="speed-opt" type="button" data-speed="accurate">
+          <b>Accurate</b><span>Best quality on small text. Slowest, most CPU.</span>
+        </button>
+      </div>
+      <div class="modal-actions">
+        <button class="cp-btn cp-save" type="button" id="ocr-modal-close">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New deck dialog (opened by "＋ New deck" on Create card) -->
+  <div class="modal-backdrop" id="deck-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="deck-modal-title">
+      <h3 class="modal-title" id="deck-modal-title">New deck</h3>
+      <p class="modal-sub">Name your new deck. It appears in the Deck dropdown and under My card.</p>
+      <input class="input" type="text" id="deck-name-input" maxlength="60"
+             placeholder="e.g. JLPT N3" autocomplete="off" />
+      <span class="field-hint err" id="deck-name-error"></span>
+      <div class="modal-actions">
+        <button class="cp-btn" type="button" id="deck-cancel-btn">Cancel</button>
+        <button class="cp-btn cp-save" type="button" id="deck-create-btn">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Deck "⋯" popup menu (delete a deck) -->
+  <div class="popmenu" id="deck-menu" hidden>
+    <button class="popmenu-item danger" type="button" id="deck-menu-delete">Delete deck</button>
+  </div>
+
+  <!-- Confirm dialog (deck/card deletion) -->
+  <div class="modal-backdrop" id="confirm-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <h3 class="modal-title" id="confirm-title">Delete?</h3>
+      <p class="modal-sub" id="confirm-message">This can't be undone.</p>
+      <div class="modal-actions">
+        <button class="cp-btn" type="button" id="confirm-cancel">Cancel</button>
+        <button class="cp-btn danger" type="button" id="confirm-ok">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Expanded view of a captured card image (click to retract) -->
+  <div class="lightbox" id="img-lightbox" hidden>
+    <img class="lightbox-img" id="lightbox-img" alt="Captured frame (expanded)" />
+  </div>
+
+  <script src="colorpicker.js"></script>
+  <script src="nav.js"></script>
+  <script src="cards.js"></script>
+  <script src="app.js"></script>
+  <script src="furigana.js"></script>
+</body>
+</html>

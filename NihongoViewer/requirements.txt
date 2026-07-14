@@ -1,0 +1,39 @@
+# Core dependencies (MeikiOCR path — no torch required).
+pywebview>=5.0
+pywin32>=306
+Pillow>=10.0
+numpy>=1.24
+
+# Settings persistence — picks the platform-appropriate config directory.
+platformdirs>=4.0
+
+# Screen capture — Windows Graphics Capture (per-window, no game disturbance).
+# NOTE: install this one WITHOUT its deps so it doesn't pull in `opencv-python`
+# (we already use `opencv-python-headless` via meikiocr — two OpenCV builds clash):
+#     pip install --no-deps windows-capture
+windows-capture>=2.0
+
+# OCR — MeikiOCR (ONNX Runtime, horizontal/retro-game fonts).
+meikiocr>=0.3.4
+
+# Translation — MADLAD-400-3B (Apache-2.0, commercial-safe) JA->EN, run via
+# CTranslate2 + SentencePiece. Uses a ready-made int8 CTranslate2 export, so there
+# is NO torch conversion step — weights (~1.65 GB) download on first run into the
+# HF cache and inference is torch-free.
+ctranslate2>=4.0
+sentencepiece>=0.2.0
+
+# Name protection — romanize proper-noun katakana (ヤツシロ -> Yatsushiro) so the MT
+# model doesn't mistranslate names. fugashi+unidic-lite tag proper nouns; jaconv
+# does kana->romaji. All torch-free. Guarded in translate/names.py, so translation
+# still runs if they're absent (just without name protection).
+fugashi>=1.3
+unidic-lite>=1.0.8
+jaconv>=0.3
+
+# Anki export — builds the .apkg (Anki Deck Package) for a deck. Pure Python,
+# no network at runtime.
+genanki>=0.13.0
+
+# MangaOCR (vertical text) is an optional heavy extra — see
+# requirements-mangaocr.txt. Guarded in code so MeikiOCR-only users don't need torch.
