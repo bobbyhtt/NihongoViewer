@@ -535,3 +535,14 @@ window.addEventListener("pywebviewready", async () => {
   selectEngine(currentEngine); // load the saved/default OCR engine up front
   loadTranslator(); // and the translation backend (both download on first run)
 });
+
+// About page: open the bundled third-party licenses file in the OS default app.
+const licensesLink = document.getElementById("open-licenses-link");
+if (licensesLink) {
+  licensesLink.addEventListener("click", async (e) => {
+    e.preventDefault();
+    if (!hasApi()) return;
+    const res = await window.pywebview.api.open_licenses();
+    if (res && res.ok === false) licensesLink.title = res.error || "Couldn't open the file.";
+  });
+}

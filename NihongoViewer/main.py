@@ -9,6 +9,7 @@ The UI drives it frame by frame via `process_frame`, which also returns the
 detected/translated text for the debug Text panel.
 """
 
+import os
 import re
 import threading
 from pathlib import Path
@@ -253,8 +254,7 @@ class Api:
         import anki_export
 
         if not anki_export.is_available():
-            return {"ok": False, "error":
-                    "Anki export needs the 'genanki' package. Install it:  pip install genanki"}
+            return {"ok": False, "error": "Anki export is unavailable in this build."}
 
         cards = decks.get_deck_cards(deck_name)
         if not cards:
@@ -286,6 +286,28 @@ class Api:
         except Exception as exc:
             return {"ok": False, "error": f"Export failed: {exc}"}
         return {"ok": True, "path": path, "count": count}
+
+    def open_licenses(self) -> dict:
+        """Open the bundled third-party licenses file with the OS default app.
+
+        Looks next to the app first (where the file ships in a build), then falls
+        back to the repo root during development. Returns {ok} or {ok, error}.
+        """
+        app_dir = Path(__file__).parent
+        candidates = [
+            app_dir / "THIRD_PARTY_LICENSES.md",
+            app_dir / "THIRD-PARTY-NOTICES.txt",
+            app_dir.parent / "THIRD_PARTY_LICENSES.md",
+            app_dir.parent / "THIRD-PARTY-NOTICES.txt",
+        ]
+        for path in candidates:
+            if path.exists():
+                try:
+                    os.startfile(str(path))  # Windows: open with the default handler
+                except OSError as exc:
+                    return {"ok": False, "error": f"Couldn't open the file: {exc}"}
+                return {"ok": True, "path": str(path)}
+        return {"ok": False, "error": "Licenses file was not found."}
 
     #: Max width of a card's captured image — larger than the ~640px preview so
     #: the expanded (lightbox) view is crisp, but still modest for storage.

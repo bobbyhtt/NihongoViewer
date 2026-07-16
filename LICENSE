@@ -1,0 +1,91 @@
+NihongoViewer — End User License Agreement (EULA)
+
+Copyright (c) 2026 Tanachot Srisombat. All rights reserved.
+
+IMPORTANT — READ CAREFULLY. This End User License Agreement ("Agreement") is a
+legal agreement between you ("You" or "Licensee") and Tanachot Srisombat
+("Licensor") for the NihongoViewer software application, including its
+executables, data files, and accompanying documentation (collectively, the
+"Software"). By downloading, installing, or using the Software, You agree to be
+bound by the terms of this Agreement. If You do not agree, do not install or use
+the Software.
+
+1. LICENSE GRANT
+   Subject to Your compliance with this Agreement and payment of any applicable
+   fees, Licensor grants You a personal, non-exclusive, non-transferable,
+   revocable license to install and use one copy of the Software for Your own
+   personal, non-commercial use on devices You own or control.
+
+2. RESTRICTIONS
+   Except to the extent this restriction is prohibited by applicable law or
+   permitted by the license of a third-party component (see Section 6), You may
+   NOT:
+   (a) copy, distribute, sublicense, rent, lease, lend, sell, or otherwise
+       transfer the Software or any copy of it;
+   (b) reverse engineer, decompile, or disassemble the Software, or attempt to
+       derive its source code;
+   (c) modify, adapt, translate, or create derivative works of the Software;
+   (d) remove, alter, or obscure any copyright, trademark, or other proprietary
+       notices; or
+   (e) use the Software to develop a competing product or service.
+
+3. OWNERSHIP
+   The Software is licensed, not sold. Licensor and its licensors retain all
+   right, title, and interest in and to the Software, including all intellectual
+   property rights. This Agreement does not grant You any rights to trademarks or
+   service marks of Licensor.
+
+4. THIRD-PARTY COMPONENTS
+   The Software incorporates or makes use of third-party open-source and
+   free-software components, and downloads certain machine-learning model weights
+   at runtime. Those components are licensed to You under their own respective
+   license terms, which are set out in the accompanying THIRD_PARTY_LICENSES file.
+   To the extent any third-party license grants You rights that conflict with the
+   restrictions in Section 2, that third-party license governs with respect to
+   that specific component. You agree to comply with all such third-party license
+   terms.
+
+5. MODEL WEIGHTS DOWNLOADED AT RUNTIME
+   The Software downloads OCR and translation model weights from third-party
+   sources (e.g. Hugging Face) on first run. These weights are not distributed by
+   Licensor and are subject to the licenses stated by their respective publishers,
+   as summarized in THIRD_PARTY_LICENSES. Your use of those weights is governed by
+   those licenses.
+
+6. FONTS
+   Bundled fonts are licensed under the SIL Open Font License, Version 1.1, and
+   remain governed by that license. Their license texts are included with the
+   Software.
+
+7. DISCLAIMER OF WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY
+   KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE IMPLIED WARRANTIES
+   OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+   LICENSOR DOES NOT WARRANT THAT THE SOFTWARE WILL BE ERROR-FREE, THAT TRANSLATIONS
+   OR OCR RESULTS WILL BE ACCURATE, OR THAT OPERATION WILL BE UNINTERRUPTED.
+
+8. LIMITATION OF LIABILITY
+   TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL LICENSOR BE
+   LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES,
+   OR ANY LOSS OF PROFITS OR DATA, ARISING OUT OF OR RELATED TO YOUR USE OF OR
+   INABILITY TO USE THE SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
+   DAMAGES. LICENSOR'S TOTAL AGGREGATE LIABILITY SHALL NOT EXCEED THE AMOUNT YOU
+   PAID FOR THE SOFTWARE.
+
+9. TERMINATION
+   This Agreement is effective until terminated. It terminates automatically if
+   You breach any term. Upon termination You must cease all use of the Software and
+   destroy all copies in Your possession. Sections 3, 7, 8, and 10 survive
+   termination.
+
+10. GENERAL
+    This Agreement constitutes the entire agreement between the parties regarding
+    the Software and supersedes all prior understandings. If any provision is held
+    unenforceable, the remaining provisions remain in full force. Licensor's
+    failure to enforce any right is not a waiver. This Agreement is governed by the
+    laws of Thailand, without regard to its conflict-of-laws rules.
+
+For distribution on the Steam platform, Your use of the Software is also subject
+to the Steam Subscriber Agreement between You and Valve Corporation.
+
+Contact: tanachot.Yomitori@hotmail.com

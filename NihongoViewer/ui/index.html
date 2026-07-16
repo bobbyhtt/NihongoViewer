@@ -33,6 +33,14 @@
           </svg>
           <span>My card</span>
         </button>
+        <button class="nav-item" data-page="about">
+          <svg viewBox="0 0 24 24" class="nav-ico" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"/>
+            <path d="M12 11.5v4.5"/>
+            <circle cx="12" cy="7.8" r="0.7" fill="currentColor" stroke="none"/>
+          </svg>
+          <span>About</span>
+        </button>
       </nav>
     </aside>
 
@@ -389,6 +397,83 @@
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- ================================ ABOUT ============================= -->
+      <div class="page" id="page-about">
+        <section class="panel about-hero">
+          <div class="about-brand">
+            <span class="logo about-logo">文<span class="logo-a">A</span></span>
+            <div>
+              <h2 class="about-name">NihongoViewer</h2>
+              <span class="about-ver">Version 1.0.0</span>
+            </div>
+          </div>
+          <p class="about-tagline">
+            An offline, real-time screen translator for Japanese games and
+            applications. Capture → OCR → Translate → Overlay — everything runs
+            locally on your machine, with no cloud services at runtime.
+          </p>
+          <div class="about-meta">
+            <span>© 2026 Tanachot Srisombat. All rights reserved.</span>
+            <span>Licensed under the NihongoViewer End User License Agreement.</span>
+            <a class="link" href="mailto:tanachot.Yomitori@hotmail.com">tanachot.Yomitori@hotmail.com</a>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel-title">OPEN-SOURCE LICENSES</h2>
+          <p class="about-note">
+            NihongoViewer is built with the open-source components below, each used
+            under its own license. The complete license texts are included in the
+            <a class="link" href="#" id="open-licenses-link">THIRD_PARTY_LICENSES</a>
+            file shipped alongside the application.
+          </p>
+
+          <div class="lic-scroll">
+            <div class="lic-group">
+              <h3 class="lic-head">Translation &amp; OCR</h3>
+              <ul class="lic-list">
+                <li><span class="lic-name">MADLAD-400-3B</span><span class="lic-desc">Machine-translation model · Google</span><span class="lic-badge">Apache-2.0</span></li>
+                <li><span class="lic-name">MeikiOCR</span><span class="lic-desc">Text recognition · code by rtr46</span><span class="lic-badge">Apache-2.0</span></li>
+                <li><span class="lic-name">MeikiOCR models</span><span class="lic-desc">Recognition &amp; detection weights · downloaded at runtime, replaceable</span><span class="lic-badge amber">LGPL-3.0</span></li>
+                <li><span class="lic-name">Manga-OCR</span><span class="lic-desc">Vertical-text OCR · kha-white</span><span class="lic-badge">Apache-2.0</span></li>
+                <li><span class="lic-name">CTranslate2</span><span class="lic-desc">Translation inference engine</span><span class="lic-badge">MIT</span></li>
+                <li><span class="lic-name">SentencePiece</span><span class="lic-desc">Tokenizer</span><span class="lic-badge">Apache-2.0</span></li>
+                <li><span class="lic-name">ONNX Runtime</span><span class="lic-desc">OCR model runtime</span><span class="lic-badge">MIT</span></li>
+                <li><span class="lic-name">Transformers</span><span class="lic-desc">Model runtime · Hugging Face</span><span class="lic-badge">Apache-2.0</span></li>
+                <li><span class="lic-name">PyTorch</span><span class="lic-desc">Tensor backend for Manga-OCR</span><span class="lic-badge">BSD-3-Clause</span></li>
+                <li><span class="lic-name">OpenCV</span><span class="lic-desc">Image processing</span><span class="lic-badge">Apache-2.0</span></li>
+                <li><span class="lic-name">fugashi + UniDic</span><span class="lic-desc">Japanese tokenizer &amp; dictionary</span><span class="lic-badge">MIT · BSD</span></li>
+                <li><span class="lic-name">jaconv</span><span class="lic-desc">Kana ↔ romaji conversion</span><span class="lic-badge">MIT</span></li>
+              </ul>
+            </div>
+
+            <div class="lic-group">
+              <h3 class="lic-head">Application &amp; runtime</h3>
+              <ul class="lic-list">
+                <li><span class="lic-name">pywebview</span><span class="lic-desc">Native window / UI shell</span><span class="lic-badge">BSD-3-Clause</span></li>
+                <li><span class="lic-name">pywin32</span><span class="lic-desc">Windows API access</span><span class="lic-badge">PSF</span></li>
+                <li><span class="lic-name">windows-capture</span><span class="lic-desc">Per-window screen capture</span><span class="lic-badge">MIT</span></li>
+                <li><span class="lic-name">Pillow</span><span class="lic-desc">Imaging</span><span class="lic-badge">MIT-CMU</span></li>
+                <li><span class="lic-name">NumPy</span><span class="lic-desc">Numerical arrays</span><span class="lic-badge">BSD-3-Clause</span></li>
+                <li><span class="lic-name">platformdirs</span><span class="lic-desc">Config-directory resolution</span><span class="lic-badge">MIT</span></li>
+                <li><span class="lic-name">huggingface-hub</span><span class="lic-desc">Model download &amp; cache</span><span class="lic-badge">Apache-2.0</span></li>
+                <li><span class="lic-name">certifi</span><span class="lic-desc">CA certificate bundle</span><span class="lic-badge amber">MPL-2.0</span></li>
+                <li><span class="lic-name">tqdm</span><span class="lic-desc">Progress reporting</span><span class="lic-badge amber">MPL-2.0 · MIT</span></li>
+              </ul>
+            </div>
+
+            <div class="lic-group">
+              <h3 class="lic-head">Bundled fonts — SIL Open Font License 1.1</h3>
+              <ul class="lic-list">
+                <li><span class="lic-name">Noto Sans JP</span><span class="lic-desc">Google Fonts</span><span class="lic-badge">OFL-1.1</span></li>
+                <li><span class="lic-name">M PLUS Rounded 1c</span><span class="lic-desc">Google Fonts</span><span class="lic-badge">OFL-1.1</span></li>
+                <li><span class="lic-name">Shippori Mincho</span><span class="lic-desc">Google Fonts</span><span class="lic-badge">OFL-1.1</span></li>
+              </ul>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   </div>

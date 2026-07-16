@@ -968,3 +968,79 @@ a.crumb:hover { color: var(--text); }
   .main, .text-boxes { grid-template-columns: 1fr; }
   .create-grid { grid-template-columns: 1fr; }
 }
+
+/* ---- About page ---------------------------------------------------------- */
+.about-hero { display: flex; flex-direction: column; gap: 14px; }
+.about-brand { display: flex; align-items: center; gap: 14px; }
+.about-logo { font-size: 26px; padding: 8px 12px; }
+.about-name { font-size: 22px; font-weight: 700; letter-spacing: 0.2px; }
+.about-ver {
+  display: inline-block;
+  margin-top: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.about-tagline { font-size: 13.5px; line-height: 1.6; color: var(--text); max-width: 640px; }
+.about-meta { display: flex; flex-direction: column; gap: 4px; }
+.about-meta span, .about-meta a { font-size: 12.5px; color: var(--muted); }
+.about-meta a { color: var(--blue-hover); text-decoration: none; width: fit-content; }
+.about-meta a:hover { text-decoration: underline; }
+
+.about-note { font-size: 12.5px; line-height: 1.6; color: var(--muted); margin-bottom: 12px; }
+.about-note b { color: var(--text); font-weight: 600; }
+
+.lic-scroll {
+  max-height: 460px;
+  overflow-y: auto;
+  padding-right: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.lic-group { display: flex; flex-direction: column; gap: 8px; }
+.lic-head {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  color: var(--label);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.lic-list { list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.lic-list li {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.9fr) 1.6fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 8px;
+  border-radius: 8px;
+}
+.lic-list li:hover { background: var(--panel-2); }
+.lic-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.lic-desc { font-size: 12px; color: var(--muted); }
+.lic-badge {
+  justify-self: end;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--label);
+  background: var(--input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+/* Copyleft components (LGPL / MPL) — flagged so they stand out from permissive ones. */
+.lic-badge.amber {
+  color: #e0a53a;
+  border-color: rgba(224, 165, 58, 0.4);
+  background: rgba(224, 165, 58, 0.1);
+}
+.lic-foot {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--muted);
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.lic-foot .lic-badge { padding: 1px 6px; }
