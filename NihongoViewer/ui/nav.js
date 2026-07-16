@@ -9,6 +9,9 @@ const pages = document.querySelectorAll(".content > .page");
 function showPage(name) {
   navItems.forEach((b) => b.classList.toggle("active", b.dataset.page === name));
   pages.forEach((p) => p.classList.toggle("active", p.id === `page-${name}`));
+  // Let feature code react to a page becoming visible (e.g. cards.js loads the
+  // current capture-stack item into the form when Create card opens).
+  document.dispatchEvent(new CustomEvent("nv:page-changed", { detail: { page: name } }));
 }
 
 navItems.forEach((btn) => {

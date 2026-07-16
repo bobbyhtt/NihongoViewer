@@ -44,6 +44,9 @@ class Api:
         self._engine_name: str | None = None
         self._translator: translate.Translator | None = None
         self._overlay = None  # created lazily on first draw (overlay.Overlay)
+        # The pywebview window, set in main() once it exists. Used to push events
+        # into the UI (e.g. the global "capture into Create-card stack" hotkey).
+        self._window = None
         # All persisted settings (loaded from disk; see config.DEFAULTS).
         self._settings = config.load()
         # Overlay visibility is a transient runtime flag (not persisted): the
@@ -66,6 +69,15 @@ class Api:
         # Global hide/show hotkey — works even when our window isn't focused.
         self._hotkey = hotkey.HotkeyManager(self._toggle_overlay)
         self._hotkey.set_hotkey(self._settings["hotkey"])
+
+        # Second global hotkey: grab the current frame + its translation into the
+        # Create-card capture stack. Also works when our window isn't focused, so
+        # the user can snap lines straight from the game. Each HotkeyManager runs
+        # its own thread and registers hotkey id 1; ids are per-thread, so two
+        # independent instances coexist fine (a same-combo clash is reported as
+        # "in_use" by the OS, like any other unavailable combo).
+        self._card_hotkey = hotkey.HotkeyManager(self._capture_card_hotkey)
+        self._card_hotkey.set_hotkey(self._settings["card_hotkey"])
 
     # -- window capture -------------------------------------------------------
     def list_windows(self) -> list[dict]:
@@ -343,22 +355,17 @@ class Api:
         the UI can tell the user if the combo was rejected (e.g. already in use).
         """
         patch = {k: v for k, v in (patch or {}).items() if k in config.DEFAULTS}
-        # The hotkey is handled apart from the other settings: we must not persist
-        # it until the OS actually accepts it, or a rejected combo would be saved
-        # and leave the next launch with no working hotkey.
+        # The two global hotkeys are handled apart from the other settings: we must
+        # not persist one until the OS actually accepts it, or a rejected combo
+        # would be saved and leave the next launch with a dead hotkey.
         new_hotkey = patch.pop("hotkey", None)
+        new_card_hotkey = patch.pop("card_hotkey", None)
         with self._lock:
             self._settings.update(patch)
-            # Only rebind when it actually changed — routine style saves resend it
-            # unchanged, and rebinding blocks on the OS round-trip.
-            changed = new_hotkey is not None and new_hotkey != self._settings.get("hotkey")
 
-        hotkey_result = None
-        if changed:
-            hotkey_result = self._hotkey.set_hotkey(new_hotkey)
-            if hotkey_result["ok"]:
-                with self._lock:
-                    self._settings["hotkey"] = new_hotkey
+        hotkey_result = self._rebind_hotkey(self._hotkey, "hotkey", new_hotkey)
+        card_hotkey_result = self._rebind_hotkey(
+            self._card_hotkey, "card_hotkey", new_card_hotkey)
 
         with self._lock:
             config.save(self._settings)
@@ -371,6 +378,27 @@ class Api:
         result = {"ok": True}
         if hotkey_result is not None:
             result["hotkey"] = hotkey_result
+        if card_hotkey_result is not None:
+            result["card_hotkey"] = card_hotkey_result
+        return result
+
+    def _rebind_hotkey(self, manager, key: str, new_spec):
+        """(Re)bind one global hotkey and persist it only if the OS accepts it.
+
+        Returns the manager's result dict (so the UI can report a rejected combo),
+        or None when there was nothing to change. Only rebinds when the spec
+        actually differs — routine style saves resend the current combo unchanged,
+        and rebinding blocks on the OS round-trip.
+        """
+        if new_spec is None:
+            return None
+        with self._lock:
+            if new_spec == self._settings.get(key):
+                return None
+        result = manager.set_hotkey(new_spec)
+        if result["ok"]:
+            with self._lock:
+                self._settings[key] = new_spec
         return result
 
     def _toggle_overlay(self) -> None:
@@ -387,6 +415,29 @@ class Api:
             enabled = self._overlay_enabled
         if not enabled:
             self._hide_overlay()  # showing again happens on the next frame
+
+    def _capture_card_hotkey(self) -> None:
+        """Push the current frame + translation into the Create-card stack.
+
+        Global-hotkey callback (runs off the UI thread). We don't build the
+        capture here — the UI already holds the latest frame/text from the
+        capture loop — so we just poke the UI to snapshot it. A no-op when not
+        capturing (nothing to grab). `evaluate_js` marshals to the UI thread, so
+        it's safe to call from the hotkey thread.
+        """
+        with self._lock:
+            if not self._capturing:
+                return
+            window = self._window
+        if window is None:
+            return
+        try:
+            window.evaluate_js(
+                "window.NihongoViewer && window.NihongoViewer.onHotkeyCapture"
+                " && window.NihongoViewer.onHotkeyCapture()"
+            )
+        except Exception:
+            pass  # a failed UI poke must not kill the hotkey thread
 
     # -- the pipeline ---------------------------------------------------------
     def process_frame(self, hwnd) -> dict:
@@ -568,16 +619,19 @@ class Api:
 
 def main() -> None:
     api = Api()
-    webview.create_window(
+    window = webview.create_window(
         title="NihongoViewer",
         url=str(INDEX_HTML),
         js_api=api,
         width=1024,
-        height=768,
+        height=940,
         min_size=(680, 600),
     )
+    # Hand the window to the API so the card-capture hotkey can poke the UI.
+    api._window = window
     webview.start()
-    api._hotkey.close()  # unregister the global hotkey on exit
+    api._hotkey.close()       # unregister the global hotkeys on exit
+    api._card_hotkey.close()
 
 
 if __name__ == "__main__":

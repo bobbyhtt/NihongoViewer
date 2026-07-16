@@ -41,6 +41,10 @@ window.NihongoViewer = {
   lastCapture,
   isCapturing: () => capturing,
   currentEngine: () => currentEngine,
+  // Called from Python (main.Api._capture_card_hotkey) when the global
+  // Create-card capture hotkey fires. Fan out to whoever owns the stack (cards.js)
+  // via a DOM event — same decoupling as nv:capture-changed.
+  onHotkeyCapture: () => document.dispatchEvent(new CustomEvent("nv:hotkey-capture")),
 };
 
 // Let other views (Create card's capture-status badge) react to capture/engine
@@ -160,19 +164,12 @@ function setOcrStatus(label) {
 
 // ---- Settings: mirror the panel to the overlay + persist to disk ------------
 
-const hotkeyInput = document.getElementById("hotkey-input");
-const hotkeySaveBtn = document.getElementById("hotkey-save");
-const hotkeyStatus = document.getElementById("hotkey-status");
 const textModeGroup = document.getElementById("text-mode");
 
-function setHotkeyStatus(text, kind = "") {
-  hotkeyStatus.textContent = text;
-  hotkeyStatus.className = "field-hint" + (kind ? " " + kind : "");
-}
-
-// The committed hotkey (what's actually persisted + registered). The input can
-// show a freshly-captured combo that isn't live until the user clicks Save.
-let savedHotkey = "Ctrl + Shift + H";
+// The committed combos (what's actually persisted + registered). Each hotkey
+// input can show a freshly-captured combo that isn't live until the user Saves.
+let savedHotkey = "Alt + V";                // hide/show overlay
+let savedCardHotkey = "Alt + C";            // capture into the Create-card stack
 const HOTKEY_MODS = new Set(["Ctrl", "Shift", "Alt", "Win"]);
 
 // Tokenize on the spaced " + " our capture emits, so the "+" / "-" keys don't
@@ -197,11 +194,6 @@ function isValidHotkey(spec) {
   const key = parts[parts.length - 1];
   const mods = parts.slice(0, -1);
   return !HOTKEY_MODS.has(key) && mods.every((m) => HOTKEY_MODS.has(m));
-}
-// Save is enabled only for a valid combo that differs from the saved one.
-function refreshHotkeySave() {
-  const cur = hotkeyInput.value;
-  hotkeySaveBtn.disabled = !(isValidHotkey(cur) && canonHotkey(cur) !== canonHotkey(savedHotkey));
 }
 
 function activeTextMode() {
@@ -243,7 +235,10 @@ function currentSettings() {
     offset_x: Number(document.getElementById("offset-x").value) || 0,
     offset_y: Number(document.getElementById("offset-y").value) || 0,
     text_mode: activeTextMode(),
-    hotkey: savedHotkey, // only the committed hotkey; capture stays in the field
+    // Only the committed combos; a freshly-captured one stays in its field until
+    // Saved. Resent unchanged on style saves — the backend only rebinds on change.
+    hotkey: savedHotkey,
+    card_hotkey: savedCardHotkey,
   };
 }
 
@@ -273,7 +268,7 @@ textModeGroup.querySelectorAll(".toggle").forEach((btn) => {
   });
 });
 
-// Hotkey capture: focus the field and press a combo. Capturing only fills the
+// Hotkey capture: focus a field and press a combo. Capturing only fills the
 // field — the user commits it with the Save button (so a mistyped combo is easy
 // to redo). We build the spec from the live modifier state + the pressed key.
 const MODIFIER_KEYS = new Set(["Control", "Shift", "Alt", "Meta"]);
@@ -285,55 +280,98 @@ function heldModifiers(e) {
   if (e.metaKey) parts.push("Win");
   return parts;
 }
-hotkeyInput.addEventListener("keydown", (e) => {
-  e.preventDefault(); // don't type the key into the field
-  if (MODIFIER_KEYS.has(e.key)) {
-    // Live feedback while only modifiers are held (e.g. "Ctrl + Shift + …").
-    const held = heldModifiers(e);
-    if (held.length) hotkeyInput.value = held.join(" + ") + " + …";
-    return; // wait for the real (non-modifier) key
-  }
-  const parts = heldModifiers(e);
-  let key = e.key;
-  if (key === " ") key = "Space";
-  else if (key.length === 1) key = key.toUpperCase();
-  parts.push(key);
-  hotkeyInput.value = parts.join(" + ");
-  refreshHotkeySave();
-});
 
-// If the user clicks away with only modifiers held (a dangling "Ctrl + …"),
-// restore the committed combo so the field never shows a half-typed spec.
-hotkeyInput.addEventListener("blur", () => {
-  if (hotkeyInput.value.endsWith("…")) {
-    hotkeyInput.value = formatHotkey(savedHotkey);
-    refreshHotkeySave();
-  }
-});
+// Wire one hotkey field (input + Save button + status hint). Both global
+// hotkeys — hide/show and Create-card capture — share identical capture/commit
+// behavior, differing only in which setting key + rebind result they carry.
+// `getSaved`/`setSaved` bridge to the module-level committed combo so the rest
+// of the settings code (currentSettings / applySettings) can read it.
+function createHotkeyField({ inputId, saveId, statusId, settingKey, resultKey, getSaved, setSaved }) {
+  const input = document.getElementById(inputId);
+  const saveBtn = document.getElementById(saveId);
+  const status = document.getElementById(statusId);
 
-// Commit the captured hotkey: persist + register it, then report the outcome.
-// Only mark it saved if the OS actually accepted the combo.
-hotkeySaveBtn.addEventListener("click", async () => {
-  if (hotkeySaveBtn.disabled) return;
-  const spec = formatHotkey(hotkeyInput.value);
-  hotkeySaveBtn.disabled = true;
-  let res;
-  try {
-    res = await window.pywebview.api.update_settings({ hotkey: spec });
-  } catch (e) {
-    res = { ok: false };
+  function setStatus(text, kind = "") {
+    status.textContent = text;
+    status.className = "field-hint" + (kind ? " " + kind : "");
   }
-  const hk = res && res.hotkey;
-  if (hk && hk.ok === false) {
-    // The OS refused it (usually another app owns that combo). Keep it editable.
-    setHotkeyStatus(`✗ "${spec}" is unavailable — try another combo`, "err");
-    refreshHotkeySave();
-    return;
+  // Save is enabled only for a valid combo that differs from the saved one.
+  function refreshSave() {
+    const cur = input.value;
+    saveBtn.disabled = !(isValidHotkey(cur) && canonHotkey(cur) !== canonHotkey(getSaved()));
   }
-  savedHotkey = spec;
-  hotkeyInput.value = spec;
-  refreshHotkeySave(); // now disabled again (nothing pending)
-  setHotkeyStatus(`✓ Active: ${spec}`, "ok");
+
+  input.addEventListener("keydown", (e) => {
+    e.preventDefault(); // don't type the key into the field
+    if (MODIFIER_KEYS.has(e.key)) {
+      // Live feedback while only modifiers are held (e.g. "Ctrl + Shift + …").
+      const held = heldModifiers(e);
+      if (held.length) input.value = held.join(" + ") + " + …";
+      return; // wait for the real (non-modifier) key
+    }
+    const parts = heldModifiers(e);
+    let key = e.key;
+    if (key === " ") key = "Space";
+    else if (key.length === 1) key = key.toUpperCase();
+    parts.push(key);
+    input.value = parts.join(" + ");
+    refreshSave();
+  });
+
+  // If the user clicks away with only modifiers held (a dangling "Ctrl + …"),
+  // restore the committed combo so the field never shows a half-typed spec.
+  input.addEventListener("blur", () => {
+    if (input.value.endsWith("…")) {
+      input.value = formatHotkey(getSaved());
+      refreshSave();
+    }
+  });
+
+  // Commit the captured hotkey: persist + register it, then report the outcome.
+  // Only mark it saved if the OS actually accepted the combo.
+  saveBtn.addEventListener("click", async () => {
+    if (saveBtn.disabled) return;
+    const spec = formatHotkey(input.value);
+    saveBtn.disabled = true;
+    let res;
+    try {
+      res = await window.pywebview.api.update_settings({ [settingKey]: spec });
+    } catch (e) {
+      res = { ok: false };
+    }
+    const hk = res && res[resultKey];
+    if (hk && hk.ok === false) {
+      // The OS refused it (usually another app owns that combo). Keep it editable.
+      setStatus(`✗ "${spec}" is unavailable — try another combo`, "err");
+      refreshSave();
+      return;
+    }
+    setSaved(spec);
+    input.value = spec;
+    refreshSave(); // now disabled again (nothing pending)
+    setStatus(`✓ Active: ${spec}`, "ok");
+  });
+
+  // Reflect a saved combo into the field on launch (Save starts disabled).
+  function applySaved(spec) {
+    setSaved(formatHotkey(spec));
+    input.value = getSaved();
+    refreshSave();
+    setStatus(`Active: ${getSaved()}`);
+  }
+
+  return { applySaved };
+}
+
+const hideShowHotkeyField = createHotkeyField({
+  inputId: "hotkey-input", saveId: "hotkey-save", statusId: "hotkey-status",
+  settingKey: "hotkey", resultKey: "hotkey",
+  getSaved: () => savedHotkey, setSaved: (v) => (savedHotkey = v),
+});
+const cardHotkeyField = createHotkeyField({
+  inputId: "card-hotkey-input", saveId: "card-hotkey-save", statusId: "card-hotkey-status",
+  settingKey: "card_hotkey", resultKey: "card_hotkey",
+  getSaved: () => savedCardHotkey, setSaved: (v) => (savedCardHotkey = v),
 });
 
 // Reflect saved settings into every control on launch.
@@ -349,10 +387,8 @@ function applySettings(s) {
   opacityVal.textContent = s.opacity;
   document.getElementById("offset-x").value = s.offset_x;
   document.getElementById("offset-y").value = s.offset_y;
-  savedHotkey = formatHotkey(s.hotkey);
-  hotkeyInput.value = savedHotkey;
-  refreshHotkeySave(); // Save starts disabled (nothing changed yet)
-  setHotkeyStatus(`Active: ${savedHotkey}`);
+  hideShowHotkeyField.applySaved(s.hotkey);
+  if (s.card_hotkey) cardHotkeyField.applySaved(s.card_hotkey);
   setTextModeButtons(s.text_mode);
   currentEngine = s.ocr_engine || currentEngine;
   applyTextModeConstraint(currentEngine); // disable Duo if the saved engine is MangaOCR

@@ -22,7 +22,8 @@ APP_NAME = "NihongoViewer"
 DEFAULTS: dict = {
     "ocr_engine": "MeikiOCR",       # active OCR engine (see ocr.available_engines())
     "ocr_speed": "balanced",        # OCR speed/quality: "fast" | "balanced" | "accurate"
-    "hotkey": "Ctrl+Shift+H",       # global hide/show overlay hotkey
+    "hotkey": "Alt+V",              # global hide/show overlay hotkey
+    "card_hotkey": "Alt+C",         # global "capture into Create-card stack" hotkey
     "font": "Noto Sans JP",         # overlay font family (bundled, JP+Latin)
     "size": 18,                     # overlay font size (pt)
     "text_color": "#ffffff",        # overlay text color

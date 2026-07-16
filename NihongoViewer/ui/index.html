@@ -85,11 +85,19 @@
 
             <label class="field-label">Hide / show hotkey</label>
             <div class="hotkey-row">
-              <input class="input" type="text" id="hotkey-input" value="Ctrl + Shift + H"
+              <input class="input" type="text" id="hotkey-input" value="Alt + V"
                      placeholder="Click here, then press a key combo" />
               <button class="btn hotkey-save" id="hotkey-save" disabled>Save</button>
             </div>
             <span class="field-hint" id="hotkey-status"></span>
+
+            <label class="field-label">Create-card capture hotkey</label>
+            <div class="hotkey-row">
+              <input class="input" type="text" id="card-hotkey-input" value="Alt + C"
+                     placeholder="Click here, then press a key combo" />
+              <button class="btn hotkey-save" id="card-hotkey-save" disabled>Save</button>
+            </div>
+            <span class="field-hint" id="card-hotkey-status"></span>
 
             <div class="row">
               <div class="col">
@@ -179,6 +187,22 @@
           </button>
           <button class="btn" id="new-deck-btn">＋ New deck</button>
         </div>
+
+        <!-- Capture stack: frames grabbed via the global capture hotkey. Flip
+             through them, load one into the form below, or drop them. -->
+        <div class="capture-stack" id="capture-stack" hidden>
+          <div class="stack-info">
+            <span class="stack-label">Captured</span>
+            <span class="stack-pos" id="stack-pos">0 / 0</span>
+          </div>
+          <div class="stack-nav">
+            <button class="btn" id="stack-prev-btn" title="Previous capture">‹ Prev</button>
+            <button class="btn" id="stack-next-btn" title="Next capture">Next ›</button>
+            <button class="btn danger" id="stack-delete-btn" title="Remove this capture">🗑 Delete</button>
+            <button class="btn" id="stack-clear-btn" title="Remove all captures">Clear all</button>
+          </div>
+        </div>
+        <span class="field-hint stack-hint" id="stack-hint"></span>
 
         <div class="create-grid">
           <!-- Image / capture column -->

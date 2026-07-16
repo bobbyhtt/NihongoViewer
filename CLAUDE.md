@@ -60,6 +60,7 @@ stage — **do not** build a plugin system.
 | 6 | Background opacity | 0–100%, slider. |
 | 7 | Text position offset | X/Y offset in pixels. Default: cover the original text location. **This is the only positioning control — the app is in-place-only, no separate banner mode.** |
 | 8 | Text mode | Single sub vs Duo sub. Single = one line, replace-in-place. Duo = two lines (previous+current, or original+translation stacked) — **exact semantics TBD, see [Open decisions](#open-decisions).** |
+| 9 | Create-card capture hotkey | **Global** hotkey (like #2) — snapshots the current frame + its OCR/translation into the Create-card **capture stack** (max 20 entries, transient/not persisted). The user flips through the stack (prev/next), deletes entries, and loads one into the card form to save. Works when the app isn't focused. |
 
 - Persist settings across restarts in a user config file (JSON or TOML) in the
   platform-appropriate config directory via **`platformdirs`**.

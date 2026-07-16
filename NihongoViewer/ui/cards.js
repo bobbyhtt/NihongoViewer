@@ -333,6 +333,120 @@
     flashHint("Captured the current frame.", "ok");
   });
 
+  // --- Capture stack (fed by the global Create-card capture hotkey) ---
+  // Each hotkey press snapshots the current frame + its OCR/translation into a
+  // small ring (cap 20). The user flips through them here and loads one into the
+  // form to save as a card. Transient — not persisted across launches.
+  const CAPTURE_STACK_MAX = 20;
+  const captureStackEl = document.getElementById("capture-stack");
+  const stackPosEl = document.getElementById("stack-pos");
+  const stackPrevBtn = document.getElementById("stack-prev-btn");
+  const stackNextBtn = document.getElementById("stack-next-btn");
+  const stackDeleteBtn = document.getElementById("stack-delete-btn");
+  const stackClearBtn = document.getElementById("stack-clear-btn");
+
+  let captureStack = []; // [{frame, ja, en}] oldest → newest
+  let stackIndex = -1; // currently-shown capture (index into captureStack)
+  let stackLoadedIndex = -1; // which capture is reflected in the form right now
+
+  function createPageActive() {
+    return document.getElementById("page-create").classList.contains("active");
+  }
+
+  function renderStack() {
+    const n = captureStack.length;
+    captureStackEl.hidden = n === 0;
+    if (!n) return;
+    stackPosEl.textContent = `${stackIndex + 1} / ${n}`;
+    stackPrevBtn.disabled = stackIndex <= 0;
+    stackNextBtn.disabled = stackIndex >= n - 1;
+  }
+
+  // Load the capture at stackIndex into the form (image + sentence + translation).
+  function loadStackIntoForm() {
+    if (stackIndex < 0 || stackIndex >= captureStack.length) return;
+    const cap = captureStack[stackIndex];
+    if (cap.frame) setMediaImage(cap.frame);
+    else mediaBox.innerHTML = MEDIA_PLACEHOLDER;
+    sentenceEl.value = cap.ja || "";
+    sentenceTrEl.value = cap.en || "";
+    refreshFuri(sentenceEl);
+    setReadinessHint();
+    stackLoadedIndex = stackIndex;
+  }
+
+  // Snapshot the current frame + last OCR text into the stack. Mirrors the
+  // manual "Capture frame" button, but appends to the stack instead of the form.
+  async function captureToStack() {
+    const nv = window.NihongoViewer;
+    if (!nv || !nv.isCapturing()) {
+      if (createPageActive()) flashHint("Start screen capture first (Capture tab).", "err");
+      return;
+    }
+    const last = nv.lastCapture;
+    if (!last || !last.frame) return; // no frame yet — silently skip
+    // Prefer a higher-res still (~960px) for the card image, like the button.
+    let frame = last.frame;
+    if (api()) {
+      try {
+        const res = await api().capture_card_image();
+        if (res && res.ok && res.frame) frame = res.frame;
+      } catch (e) {
+        /* keep the preview-resolution frame */
+      }
+    }
+    captureStack.push({ frame, ja: last.ja || "", en: last.en || "" });
+    if (captureStack.length > CAPTURE_STACK_MAX) captureStack.shift(); // drop oldest
+    stackIndex = captureStack.length - 1; // jump to the newest
+    renderStack();
+    // If the user is on the Create-card page, show it right away; otherwise it
+    // loads when they navigate there (see the nv:page-changed handler below).
+    if (createPageActive()) loadStackIntoForm();
+    flashHint(`Captured (${captureStack.length}/${CAPTURE_STACK_MAX}).`, "ok");
+  }
+
+  function showStackItem(index) {
+    if (index < 0 || index >= captureStack.length) return;
+    stackIndex = index;
+    renderStack();
+    loadStackIntoForm();
+  }
+
+  function deleteStackItem() {
+    if (stackIndex < 0) return;
+    captureStack.splice(stackIndex, 1);
+    if (!captureStack.length) {
+      stackIndex = stackLoadedIndex = -1;
+      renderStack();
+      return;
+    }
+    if (stackIndex >= captureStack.length) stackIndex = captureStack.length - 1;
+    stackLoadedIndex = -1; // force a reload of the now-current item
+    showStackItem(stackIndex);
+  }
+
+  function clearStack() {
+    captureStack = [];
+    stackIndex = stackLoadedIndex = -1;
+    renderStack();
+  }
+
+  stackPrevBtn.addEventListener("click", () => showStackItem(stackIndex - 1));
+  stackNextBtn.addEventListener("click", () => showStackItem(stackIndex + 1));
+  stackDeleteBtn.addEventListener("click", deleteStackItem);
+  stackClearBtn.addEventListener("click", clearStack);
+
+  // Global capture hotkey → snapshot into the stack.
+  document.addEventListener("nv:hotkey-capture", captureToStack);
+
+  // When the Create-card page becomes visible, ensure the current capture is
+  // loaded (a hotkey press while on another tab won't have filled the form yet).
+  document.addEventListener("nv:page-changed", (e) => {
+    if (!e.detail || e.detail.page !== "create") return;
+    renderStack();
+    if (stackIndex >= 0 && stackLoadedIndex !== stackIndex) loadStackIntoForm();
+  });
+
   // --- Translate a field with MADLAD-400 (offline) ---
   // Re-translates the JA source (Word / Sentence) into its EN field, so a user
   // who edits the captured text can refresh the translation.
