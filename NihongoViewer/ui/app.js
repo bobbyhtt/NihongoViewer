@@ -1,8 +1,8 @@
 // ---- Settings panel: UI-only interactions -----------------------------------
 
-// Generic visual-only toggle groups. The OCR engine group (loads a model) and
-// the Text mode group (persists + drives the overlay) are handled separately.
-document.querySelectorAll(".toggle-group:not(#ocr-engine):not(#text-mode)").forEach((group) => {
+// Generic visual-only toggle groups. The Text mode group (persists + drives the
+// overlay) is handled separately.
+document.querySelectorAll(".toggle-group:not(#text-mode)").forEach((group) => {
   group.querySelectorAll(".toggle").forEach((btn) => {
     btn.addEventListener("click", () => {
       group.querySelectorAll(".toggle").forEach((b) => b.classList.remove("active"));
@@ -132,7 +132,6 @@ refreshBtn.addEventListener("click", () => {
 
 // ---- OCR + translation + overlay --------------------------------------------
 
-const ocrGroup = document.getElementById("ocr-engine");
 const ocrStatus = document.getElementById("ocr-status");
 const trStatus = document.getElementById("tr-status");
 const detectedJa = document.getElementById("detected-ja");
@@ -204,15 +203,6 @@ function activeTextMode() {
 function setTextModeButtons(mode) {
   textModeGroup.querySelectorAll(".toggle").forEach((b) =>
     b.classList.toggle("active", b.dataset.mode === mode));
-}
-
-// MangaOCR reads whole bubbles as one block, so it only supports Single mode.
-// Disable the Duo button while MangaOCR is active, and force Single if Duo was on.
-function applyTextModeConstraint(engine) {
-  const duoBtn = textModeGroup.querySelector('.toggle[data-mode="duo"]');
-  const singleOnly = engine === "MangaOCR";
-  duoBtn.disabled = singleOnly;
-  if (singleOnly && activeTextMode() === "duo") setTextModeButtons("single");
 }
 
 // Custom color pickers (replace the native <input type="color">). Committing a
@@ -391,7 +381,6 @@ function applySettings(s) {
   if (s.card_hotkey) cardHotkeyField.applySaved(s.card_hotkey);
   setTextModeButtons(s.text_mode);
   currentEngine = s.ocr_engine || currentEngine;
-  applyTextModeConstraint(currentEngine); // disable Duo if the saved engine is MangaOCR
   currentSpeed = s.ocr_speed || currentSpeed;
   setSpeedButtons(currentSpeed); // reflect the saved OCR speed in the dialog
 }
@@ -412,18 +401,12 @@ async function loadTranslator() {
   trStatus.textContent = translatorReady ? `● ${backend}` : "● MADLAD-400 (unavailable)";
 }
 
-// Select an OCR engine and load its weights. Switches the pipeline *stage*
-// (per CLAUDE.md) — no app restart. Returns once the model is ready or failed.
+// Load the OCR engine's weights. MeikiOCR is the only engine (no picker), so this
+// runs once at startup; the pipeline stage still loads via the backend Api.
 async function selectEngine(name) {
   if (!hasApi()) return;
   currentEngine = name;
   engineReady = false;
-
-  // Reflect the choice immediately in the toggle buttons.
-  ocrGroup.querySelectorAll(".toggle").forEach((b) => {
-    b.classList.toggle("active", b.dataset.engine === name);
-    b.disabled = true;
-  });
   setOcrStatus(`${name} (loading…)`);
 
   let res;
@@ -433,16 +416,10 @@ async function selectEngine(name) {
     res = { ok: false, error: String(e) };
   }
 
-  ocrGroup.querySelectorAll(".toggle").forEach((b) => (b.disabled = false));
-
   if (res && res.ok) {
     engineReady = true;
     setOcrStatus(name);
     notifyCaptureChanged(); // refresh the Create-card status badge with the engine
-    // Backend may have forced Single (MangaOCR); mirror it and lock the Duo
-    // button so it can't be re-selected while MangaOCR is active.
-    if (res.text_mode) setTextModeButtons(res.text_mode);
-    applyTextModeConstraint(name);
   } else {
     engineReady = false;
     setOcrStatus(`${name} (unavailable)`);
@@ -450,12 +427,6 @@ async function selectEngine(name) {
     setDetected(`${name} unavailable — ${msg}`, true);
   }
 }
-
-ocrGroup.querySelectorAll(".toggle").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    if (btn.dataset.engine !== currentEngine) selectEngine(btn.dataset.engine);
-  });
-});
 
 // ---- OCR speed dialog ("Configure OCR") -------------------------------------
 // A speed/quality tradeoff applied live to the active engine (no reload). The

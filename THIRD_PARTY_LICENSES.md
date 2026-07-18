@@ -12,7 +12,6 @@ under a component's own license.
 
 > **Legend — how each component reaches the user**
 > **Bundled**: shipped inside the NihongoViewer distribution.
-> **Optional**: shipped only if the MangaOCR extra is installed.
 > **Runtime download**: not shipped by us; downloaded from a third party on first
 > run into the user's local cache (`~/.cache/huggingface/`).
 
@@ -28,7 +27,7 @@ under a component's own license.
 | numpy | ≥1.24 | BSD 3-Clause | Arrays |
 | platformdirs | ≥4.0 | MIT | Config-dir resolution |
 | windows-capture | ≥2.0 | MIT | Windows Graphics Capture binding |
-| meikiocr (code) | ≥0.3.4 | Apache-2.0 | OCR engine code — **see model note in §4** |
+| meikiocr (code) | ≥0.3.4 | Apache-2.0 | OCR engine code — **see model note in §3** |
 | ctranslate2 | ≥4.0 | MIT | Translation inference runtime |
 | sentencepiece | ≥0.2.0 | Apache-2.0 | Tokenizer |
 | fugashi | ≥1.3 | MIT | MeCab wrapper (name protection) |
@@ -38,15 +37,7 @@ under a component's own license.
 > **Anki `.apkg` export** is built entirely with the Python **standard library**
 > (`sqlite3` + `zipfile` + `json`) — see `anki_export.py`.
 
-## 2. Optional dependencies (MangaOCR extra only)
-
-| Component | Version (min) | License | Notes |
-|---|---|---|---|
-| manga-ocr (code) | ≥0.1.14 | Apache-2.0 | Vertical-text OCR engine code — **see model note in §4** |
-| transformers | <5 | Apache-2.0 | MangaOCR tokenizer/model runtime |
-| torch (PyTorch) | (transitive) | BSD-style (PyTorch license) | Pulled in by manga-ocr |
-
-## 3. Bundled fonts — SIL Open Font License 1.1
+## 2. Bundled fonts — SIL Open Font License 1.1
 
 All three fonts are licensed under the **SIL Open Font License, Version 1.1**
 (`OFL-1.1`). Their full license texts ship alongside the fonts in
@@ -64,7 +55,7 @@ All three fonts are licensed under the **SIL Open Font License, Version 1.1**
 - You may **not** sell the fonts on their own, and you may not use the fonts'
   Reserved Font Names on any modified version.
 
-## 4. Machine-learning model weights (downloaded at runtime — NOT bundled)
+## 3. Machine-learning model weights (downloaded at runtime — NOT bundled)
 
 These weights are **not distributed by NihongoViewer**. They are downloaded from
 the publishers below on first run and are governed solely by the publisher's stated
@@ -73,7 +64,6 @@ license.
 | Model | Publisher / repo | Stated license | Used by |
 |---|---|---|---|
 | MADLAD-400-3B MT (int8 CT2 export) | `Nextcloud-AI/madlad400-3b-mt-ct2-int8` (from Google `google/madlad400-3b-mt`) | **Apache-2.0** | Translation |
-| MangaOCR base model | `kha-white/manga-ocr-base` | **Apache-2.0** | OCR (vertical, optional) |
 | MeikiOCR text-recognition | `rtr46/meiki.txt.recognition.v0` | **LGPL-3.0** ⚠️ | OCR (default) |
 | MeikiOCR text-detection | `rtr46/meiki.text.detect.v0` | **LGPL-3.0** ⚠️ | OCR (default) |
 
@@ -97,7 +87,7 @@ Apache-2.0. Key consequences for a commercial product:
 - **This is a genuine legal question for a paid release. Have qualified counsel
   confirm your specific distribution model before shipping on Steam.**
 
-## 5. Forward-looking note — PySide6 / Qt
+## 4. Forward-looking note — PySide6 / Qt
 
 The target architecture in `CLAUDE.md` calls for migrating the control panel to
 **PySide6 (Qt)**. The current build does **not** use it (the UI runs on pywebview,
@@ -116,4 +106,4 @@ OFL-1.1 texts for the bundled fonts are included in `NihongoViewer/fonts/`. Befo
 distributing on Steam, verify that the exact version of each dependency you ship
 matches the license stated here (licenses can change between releases).
 
-_Last reviewed: 2026-07-15._
+_Last reviewed: 2026-07-18._

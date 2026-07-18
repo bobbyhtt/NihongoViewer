@@ -34,6 +34,3 @@ jaconv>=0.3
 # Anki export — builds the .apkg (Anki Deck Package) with the standard library
 # only (sqlite3 + zipfile + json). No third-party dependency, so it adds no
 # license obligations to a commercial build. See anki_export.py.
-
-# MangaOCR (vertical text) is an optional heavy extra — see
-# requirements-mangaocr.txt. Guarded in code so MeikiOCR-only users don't need torch.

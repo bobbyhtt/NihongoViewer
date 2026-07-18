@@ -24,6 +24,19 @@ import ocr
 import translate
 from translate import furigana
 
+# --- Bundled models (Steam / offline build) ----------------------------------
+# When a `models/` folder ships next to the app (as in the Steam depot), use it
+# as the HuggingFace cache and run fully offline, so no weights are ever fetched
+# at runtime. A dev checkout has no such folder, so the normal first-run HF
+# download still works there. Must run before huggingface_hub is imported (it is
+# imported lazily inside the engines, so setting it here at import time is early
+# enough).
+_MODELS_DIR = Path(__file__).parent / "models"
+if _MODELS_DIR.is_dir():
+    os.environ.setdefault("HF_HOME", str(_MODELS_DIR))
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
 UI_DIR = Path(__file__).parent / "ui"
 INDEX_HTML = UI_DIR / "index.html"
 
@@ -53,17 +66,13 @@ class Api:
         # overlay starts visible each launch and the hotkey toggles it.
         self._overlay_enabled = True
         # True between Start and Stop. Checked before every overlay draw so a
-        # slow in-flight frame (MangaOCR) can't redraw the overlay after Stop.
+        # slow in-flight frame can't redraw the overlay after Stop.
         self._capturing = False
         # Last frame's draw inputs, cached so a live settings change (offset,
         # color, …) can redraw the overlay at once instead of waiting for the
         # next capture tick. Cleared whenever there's nothing on screen.
         self._last_hwnd: int | None = None
         self._last_pairs: list | None = None
-        # Whether the last frame's regions are MangaOCR blocks (fit text inside
-        # the block) vs MeikiOCR lines (draw at natural size). Cached so a live
-        # settings redraw keeps the same behavior.
-        self._last_fit: bool = False
         self._lock = threading.Lock()
 
         # Global hide/show hotkey — works even when our window isn't focused.
@@ -119,11 +128,6 @@ class Api:
             self._engine = engine
             self._engine_name = name
             self._settings["ocr_engine"] = name
-            # MangaOCR reads whole bubbles as one block, so Duo's stacked
-            # per-region JA/EN doesn't apply — it only supports Single mode.
-            # Force Single when it's selected (the UI also disables the button).
-            if name == "MangaOCR":
-                self._settings["text_mode"] = "single"
             config.save(self._settings)
             text_mode = self._settings["text_mode"]
         return {"ok": True, "engine": name, "text_mode": text_mode}
@@ -493,11 +497,6 @@ class Api:
             return {"ok": True, "frame": frame, "ja": ja, "en": "", "error": f"translate failed: {exc}"}
         en = "\n".join(t for _, t in pairs if t.strip())
 
-        # MangaOCR returns whole-bubble blocks: fit the translation inside each
-        # block so long English doesn't overflow the bubble. MeikiOCR returns
-        # per-line boxes and draws at natural size (unchanged).
-        fit = getattr(engine, "name", "") == "MangaOCR"
-
         # Remember this frame so a live style/offset change can redraw instantly,
         # then commit the draw — all under the lock. Stop hides under the same
         # lock, so a stale in-flight frame can't interleave with (and undo) it: if
@@ -505,9 +504,9 @@ class Api:
         with self._lock:
             if not self._capturing:
                 return {"ok": True, "frame": frame, "ja": ja, "en": en, "stopped": True}
-            self._last_hwnd, self._last_pairs, self._last_fit = int(hwnd), pairs, fit
+            self._last_hwnd, self._last_pairs = int(hwnd), pairs
             if self._overlay_enabled:
-                self._draw_overlay(int(hwnd), pairs, style, text_mode, fit)
+                self._draw_overlay(int(hwnd), pairs, style, text_mode)
             else:
                 self._hide_overlay_locked()
         return {"ok": True, "frame": frame, "ja": ja, "en": en}
@@ -548,10 +547,10 @@ class Api:
             if not (self._capturing and self._overlay_enabled
                     and self._last_hwnd and self._last_pairs):
                 return
-            hwnd, pairs, fit = self._last_hwnd, self._last_pairs, self._last_fit
+            hwnd, pairs = self._last_hwnd, self._last_pairs
             style = {k: self._settings[k] for k in config.STYLE_KEYS}
             text_mode = self._settings["text_mode"]
-            self._draw_overlay(hwnd, pairs, style, text_mode, fit)
+            self._draw_overlay(hwnd, pairs, style, text_mode)
 
     @staticmethod
     def _overlay_text(ja: str, en: str, text_mode: str) -> str:
@@ -561,12 +560,8 @@ class Api:
             return f"{ja}\n{en}"
         return en
 
-    def _draw_overlay(self, hwnd: int, pairs: list, style: dict, text_mode: str,
-                      fit: bool = False) -> None:
+    def _draw_overlay(self, hwnd: int, pairs: list, style: dict, text_mode: str) -> None:
         """Draw one overlay box per translated region, over its own location.
-
-        When `fit` is set (MangaOCR blocks), each translation is wrapped and
-        shrunk to fit inside its detected block instead of drawn at natural size.
 
         Caller MUST hold self._lock (so the draw can't interleave with a Stop).
         """
@@ -588,19 +583,13 @@ class Api:
                 continue
             if region.box:
                 x0, y0, x1, y1 = region.box
-                item = {
+                items.append({
                     "text": self._overlay_text(region.text, en, text_mode),
                     "x": left + x0 + offx,
                     "y": top + y0 + offy,
-                }
-                if fit:
-                    # Constrain the translation to the block's own size so it
-                    # stays inside the bubble (and masks the Japanese under it).
-                    item["box"] = (x1 - x0, y1 - y0)
-                items.append(item)
+                })
 
-        # No boxes at all (e.g. MangaOCR has no detection): one subtitle-style
-        # band lower-center of the window.
+        # No boxes at all: one subtitle-style band lower-center of the window.
         if not items:
             lines = [self._overlay_text(r.text, en, text_mode)
                      for r, en in pairs if en.strip()]

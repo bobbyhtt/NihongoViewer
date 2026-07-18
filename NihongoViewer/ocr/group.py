@@ -19,7 +19,7 @@ it over its own lines. A sentence per visible line therefore lands one English
 line per Japanese line; a wrapped sentence stays whole over the lines it spans.
 
 Japanese has no inter-word spaces, so wrapped lines are joined with **no**
-separator. Regions without a box (e.g. MangaOCR whole-bubble blocks) pass through.
+separator. Regions without a box pass through.
 """
 
 from .base import OcrRegion

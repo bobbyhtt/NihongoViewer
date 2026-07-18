@@ -26,7 +26,7 @@ class OcrRegion:
     """One detected text region and where it sits in the captured frame."""
 
     text: str
-    box: Box | None = None  # None when the engine reports no location (MangaOCR)
+    box: Box | None = None  # None when the engine reports no location
 
 
 @dataclass

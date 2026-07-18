@@ -21,13 +21,11 @@ Screen Capture -> OCR -> Translation -> Display
 
 1. **Screen Capture** — grabs the target window's pixels at the configured refresh
    rate (e.g. 1–10 fps). This is a polling loop, **not** a video pipeline.
-2. **OCR** — extracts Japanese text from the captured frame. Two selectable engines:
-   - **MeikiOCR** — horizontal text, trained on pixel/retro-game fonts.
-   - **MangaOCR** — vertical Japanese text (visual novels, manga-style UI, older JRPGs).
-
-   The active engine is a **user setting**, not auto-detected. (Orientation
-   auto-detection is a stretch goal — see [Open decisions](#open-decisions); do not
-   build it speculatively.)
+2. **OCR** — extracts Japanese text from the captured frame. Engines sit behind a
+   common ABC so the stage stays swappable, but **MeikiOCR is the only shipped
+   engine** — horizontal text, trained on pixel/retro-game fonts. (A torch-based
+   vertical-text engine, MangaOCR, was removed: it pulled in PyTorch, which is not
+   viable for the commercial Steam build — see [Open decisions](#open-decisions).)
 3. **Translation** — MADLAD-400-3B (`google/madlad400-3b-mt`, Apache-2.0 —
    commercial-safe) translates JA → EN locally via CTranslate2. Identical/near-identical
    source text should hit a cache instead of re-translating (**fuzzy** match, not just
@@ -52,7 +50,7 @@ stage — **do not** build a plugin system.
 
 | # | Setting | Behavior |
 |---|---------|----------|
-| 1 | OCR engine | MeikiOCR vs MangaOCR. Restart the pipeline **stage** on change, not the whole app. |
+| 1 | OCR engine | MeikiOCR (only shipped engine; ABC keeps the stage swappable). Restart the pipeline **stage** on change, not the whole app. |
 | 2 | Hide/Show overlay hotkey | **Global** hotkey — must work when the overlay/app isn't focused. |
 | 3 | Font family / size | Applies to overlay text. |
 | 4 | Text color | Color picker. |
@@ -113,9 +111,9 @@ cleanly.
   platform-native capture only if `mss` proves insufficient for a specific OS (document
   why here if that happens).
 - **OCR**:
-  - MeikiOCR — https://github.com/rtr46/meikiocr
-  - manga-ocr — PyTorch-based; pull in as an **optional extra** (heavy `torch` dep).
-    **Guard the import** so MeikiOCR-only users aren't forced to install torch.
+  - MeikiOCR — https://github.com/rtr46/meikiocr — the only shipped engine (ONNX, no
+    torch). **Do not reintroduce any PyTorch-based OCR** (e.g. manga-ocr): torch is a
+    licensing/size non-starter for the commercial Steam build.
 - **Translation**: MADLAD-400-3B (`google/madlad400-3b-mt`, Apache-2.0) via
   `ctranslate2` + `sentencepiece`, using the ready-made int8 CT2 export
   `Nextcloud-AI/madlad400-3b-mt-ct2-int8` (~1.65 GB) — **no torch, ever** (no
@@ -140,7 +138,7 @@ repo does **not** match it yet:
 |--------|-------------------|------------------|
 | UI toolkit | PySide6 (Qt) | **pywebview + HTML/CSS/JS** (`ui/`) |
 | Screen capture | `mss` (cross-platform) | **Windows Graphics Capture** (`windows-capture`) — per-window, no game disturbance; window enum/geometry still Win32 |
-| Pipeline | 4 stages wired | **All 4 wired**: Capture + OCR (MeikiOCR/MangaOCR) + MADLAD-400 translation (fuzzy-cached) + in-place overlay |
+| Pipeline | 4 stages wired | **All 4 wired**: Capture + OCR (MeikiOCR) + MADLAD-400 translation (fuzzy-cached) + in-place overlay |
 | Layout | 3-panel Qt grid | Single HTML page |
 
 The pywebview shell cannot provide the per-pixel-transparent, click-through overlay the
@@ -162,8 +160,7 @@ NihongoViewer/
   capture.py                  # Win32 window enum/geometry + WGC per-window capture
   ocr/                        # OCR stage — engines behind a common ABC
     base.py                   #   OcrEngine ABC + OcrResult/OcrRegion (text + boxes)
-    meiki.py                  #   MeikiOCR (ONNX, horizontal) — default
-    manga.py                  #   MangaOCR (torch, vertical) — guarded import
+    meiki.py                  #   MeikiOCR (ONNX, horizontal) — the only engine
     group.py                  #   group line-regions into positioned sentence-chunks
     __init__.py               #   create_engine() factory + registry
   translate/                  # Translation stage — backends behind a common ABC
@@ -180,7 +177,6 @@ NihongoViewer/
   fonts/                      # bundled overlay fonts (OFL, JP+Latin): Noto Sans JP,
                               #   M PLUS Rounded 1c, Shippori Mincho (+ licenses)
   requirements.txt            # core: pywebview, pywin32, Pillow, numpy, platformdirs, meikiocr, ctranslate2
-  requirements-mangaocr.txt   # optional heavy extra: manga-ocr (+ torch)
   run.bat                     # launcher (uses .venv)
   ui/                         # index.html, style.css, app.js, cards.js, furigana.js
 ```
@@ -193,8 +189,6 @@ From the `NihongoViewer/` directory:
 # First time only
 py -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
-# Optional: add the MangaOCR engine (heavy — pulls in torch)
-.venv\Scripts\python.exe -m pip install -r requirements-mangaocr.txt
 
 # Every time (or double-click run.bat)
 .venv\Scripts\python.exe main.py
@@ -204,8 +198,8 @@ py -m venv .venv
 
 - Keep the 4 pipeline stages decoupled and each independently swappable behind its ABC.
 - Prefer live-applying setting changes; treat "restart required" as a last resort.
-- Guard heavy/optional imports (e.g. `torch` for manga-ocr) so they don't break the
-  MeikiOCR-only path.
+- **No PyTorch.** The whole toolchain is torch-free (MeikiOCR is ONNX, MADLAD is CT2);
+  keep it that way so the commercial Steam build stays clean of torch's licensing/size.
 - No runtime network calls beyond the first-run model download.
 
 ## Open decisions
@@ -224,6 +218,10 @@ the answer here.
    Japanese-learning use case. Single shows the English translation only. Implemented in
    `Api._overlay_text` (`main.py`). Note: the Japanese line needs a JP-capable overlay
    font (Meiryo / Noto Sans JP); Arial renders it as tofu.
-3. **OCR orientation auto-detection** (stretch goal) — only if it proves reliable;
-   until then the OCR engine stays a manual user setting.
+3. **Vertical-text OCR / MangaOCR** — *Resolved (removed):* MangaOCR was the
+   vertical-text engine, but it is PyTorch-based, and torch is a licensing/size
+   non-starter for the commercial Steam build. It (and the whole torch dependency)
+   has been removed; **MeikiOCR (horizontal, ONNX) is the only engine.** If
+   vertical-text support is wanted again, it must come from a torch-free engine.
+   OCR orientation auto-detection is therefore moot for now (single engine).
 ```

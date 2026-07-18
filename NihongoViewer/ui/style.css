@@ -528,7 +528,9 @@ input[type="number"] { -moz-appearance: textfield; }
   text-transform: uppercase; color: var(--label);
 }
 .stack-pos { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.stack-nav { display: flex; gap: 8px; flex-wrap: wrap; }
+.stack-nav { display: flex; gap: 8px; flex-wrap: wrap; width: 100%; }
+/* Prev/Next hug the left; Delete + Clear all are pushed to the right edge. */
+.stack-nav #stack-delete-btn { margin-left: auto; }
 .stack-hint { display: block; margin-top: 6px; min-height: 1em; }
 
 .create-grid {

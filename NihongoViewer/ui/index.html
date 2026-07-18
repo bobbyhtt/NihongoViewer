@@ -77,12 +77,6 @@
           <section class="panel setting">
             <h2 class="panel-title">SETTING</h2>
 
-            <label class="field-label">OCR engine</label>
-            <div class="toggle-group" id="ocr-engine" data-group="ocr">
-              <button class="toggle active" data-engine="MeikiOCR">MeikiOCR</button>
-              <button class="toggle" data-engine="MangaOCR">MangaOCR</button>
-            </div>
-
             <label class="field-label">Hide / show hotkey</label>
             <div class="hotkey-row">
               <input class="input" type="text" id="hotkey-input" value="Alt + V"
@@ -188,25 +182,25 @@
           <button class="btn" id="new-deck-btn">＋ New deck</button>
         </div>
 
-        <!-- Capture stack: frames grabbed via the global capture hotkey. Flip
-             through them, load one into the form below, or drop them. -->
-        <div class="capture-stack" id="capture-stack" hidden>
-          <div class="stack-info">
-            <span class="stack-label">Captured</span>
-            <span class="stack-pos" id="stack-pos">0 / 0</span>
-          </div>
-          <div class="stack-nav">
-            <button class="btn" id="stack-prev-btn" title="Previous capture">‹ Prev</button>
-            <button class="btn" id="stack-next-btn" title="Next capture">Next ›</button>
-            <button class="btn danger" id="stack-delete-btn" title="Remove this capture">🗑 Delete</button>
-            <button class="btn" id="stack-clear-btn" title="Remove all captures">Clear all</button>
-          </div>
-        </div>
-        <span class="field-hint stack-hint" id="stack-hint"></span>
-
         <div class="create-grid">
           <!-- Image / capture column -->
           <div class="create-media">
+            <!-- Capture stack: frames grabbed via the global capture hotkey. Flip
+                 through them, load one into the form, or drop them. -->
+            <div class="capture-stack" id="capture-stack" hidden>
+              <div class="stack-info">
+                <span class="stack-label">Captured</span>
+                <span class="stack-pos" id="stack-pos">0 / 0</span>
+              </div>
+              <div class="stack-nav">
+                <button class="btn" id="stack-prev-btn" title="Previous capture">‹ Prev</button>
+                <button class="btn" id="stack-next-btn" title="Next capture">Next ›</button>
+                <button class="btn danger" id="stack-delete-btn" title="Remove this capture">🗑 Delete</button>
+                <button class="btn" id="stack-clear-btn" title="Remove all captures">Clear all</button>
+              </div>
+            </div>
+            <span class="field-hint stack-hint" id="stack-hint"></span>
+
             <div class="media-wrap">
               <div class="media-box" id="create-media-box">
                 <svg viewBox="0 0 24 24" class="media-ico" aria-hidden="true">
@@ -461,12 +455,9 @@
                 <li><span class="lic-name">MADLAD-400-3B</span><span class="lic-desc">Machine-translation model · Google</span><span class="lic-badge">Apache-2.0</span></li>
                 <li><span class="lic-name">MeikiOCR</span><span class="lic-desc">Text recognition · code by rtr46</span><span class="lic-badge">Apache-2.0</span></li>
                 <li><span class="lic-name">MeikiOCR models</span><span class="lic-desc">Recognition &amp; detection weights · downloaded at runtime, replaceable</span><span class="lic-badge amber">LGPL-3.0</span></li>
-                <li><span class="lic-name">Manga-OCR</span><span class="lic-desc">Vertical-text OCR · kha-white</span><span class="lic-badge">Apache-2.0</span></li>
                 <li><span class="lic-name">CTranslate2</span><span class="lic-desc">Translation inference engine</span><span class="lic-badge">MIT</span></li>
                 <li><span class="lic-name">SentencePiece</span><span class="lic-desc">Tokenizer</span><span class="lic-badge">Apache-2.0</span></li>
                 <li><span class="lic-name">ONNX Runtime</span><span class="lic-desc">OCR model runtime</span><span class="lic-badge">MIT</span></li>
-                <li><span class="lic-name">Transformers</span><span class="lic-desc">Model runtime · Hugging Face</span><span class="lic-badge">Apache-2.0</span></li>
-                <li><span class="lic-name">PyTorch</span><span class="lic-desc">Tensor backend for Manga-OCR</span><span class="lic-badge">BSD-3-Clause</span></li>
                 <li><span class="lic-name">OpenCV</span><span class="lic-desc">Image processing</span><span class="lic-badge">Apache-2.0</span></li>
                 <li><span class="lic-name">fugashi + UniDic</span><span class="lic-desc">Japanese tokenizer &amp; dictionary</span><span class="lic-badge">MIT · BSD</span></li>
                 <li><span class="lic-name">jaconv</span><span class="lic-desc">Kana ↔ romaji conversion</span><span class="lic-badge">MIT</span></li>

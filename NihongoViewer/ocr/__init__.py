@@ -2,7 +2,7 @@
 
 The active engine is a user setting (see CLAUDE.md), created via `create_engine`.
 Concrete engine classes are looked up lazily so importing this package never
-imports torch / onnxruntime until an engine is actually instantiated.
+imports onnxruntime until an engine is actually instantiated.
 """
 
 from .base import DEFAULT_SPEED, SPEED_PRESETS, OcrEngine, OcrRegion, OcrResult
@@ -11,10 +11,9 @@ from .group import group_lines
 # name -> "module:ClassName". Kept as strings so `import ocr` stays cheap.
 _ENGINES = {
     "MeikiOCR": ("meiki", "MeikiEngine"),
-    "MangaOCR": ("manga", "MangaEngine"),
 }
 
-#: Engine selected when the app first starts (the light-weight, torch-free one).
+#: Engine selected when the app first starts.
 DEFAULT_ENGINE = "MeikiOCR"
 
 
