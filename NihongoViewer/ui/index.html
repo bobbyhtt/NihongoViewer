@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NihongoViewer</title>
+  <title>Yomitori</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -48,8 +48,8 @@
     <div class="content">
       <!-- Title bar -->
       <header class="titlebar">
-        <span class="logo">文<span class="logo-a">A</span></span>
-        <h1>NihongoViewer</h1>
+        <img class="logo-img" src="logo.png" alt="Yomitori logo" />
+        <h1>Yomitori - Japanese screen capture translator</h1>
       </header>
 
       <!-- =============================== CAPTURE ============================ -->
@@ -59,10 +59,21 @@
           <!-- CAPTURE -->
           <section class="panel capture">
             <h2 class="panel-title">CAPTURE</h2>
+            <!-- Capture mode: Screen reads the whole window; Area reads only a
+                 user-defined rectangle and shows the translation in a fixed box. -->
+            <div class="toggle-group capture-mode-row" id="capture-mode">
+              <button class="toggle active" data-capmode="screen"
+                      title="Translate the whole window in place">Screen</button>
+              <button class="toggle" data-capmode="area"
+                      title="Translate only a chosen area into a fixed box">Area</button>
+            </div>
             <div class="capture-controls">
+              <!-- Screen mode: window picker. Area mode: Configure Area button in
+                   its place (window dropdown + refresh hidden — see app.js). -->
               <select id="window-select" class="grow">
                 <option value="">Loading windows…</option>
               </select>
+              <button class="btn grow" id="configure-area-btn" hidden>▧ Configure Area</button>
               <button class="btn start" id="start-btn">Start</button>
               <button class="btn icon" id="refresh-btn" title="Refresh window list">⟳</button>
             </div>
@@ -75,7 +86,17 @@
 
           <!-- SETTING -->
           <section class="panel setting">
-            <h2 class="panel-title">SETTING</h2>
+            <div class="panel-title-row">
+              <h2 class="panel-title">SETTING</h2>
+              <!-- Live overlay status + click-to-toggle (mirrors the hide/show
+                   hotkey). Disabled until capture starts, since there's no
+                   overlay to show/hide otherwise. -->
+              <button class="overlay-toggle" id="overlay-toggle" type="button"
+                      disabled title="Show or hide the translation overlay">
+                <span class="overlay-dot"></span>
+                <span id="overlay-toggle-label">Overlay off</span>
+              </button>
+            </div>
 
             <label class="field-label">Hide / show hotkey</label>
             <div class="hotkey-row">
@@ -176,8 +197,8 @@
           </select>
           <button class="btn furigana-toggle active" id="furigana-toggle-create"
                   type="button" aria-pressed="true"
-                  title="Show kana readings over kanji">
-            <span class="furi-mark">あ</span> Furigana
+                  title="Show readings and hover any word for its dictionary meaning">
+            <span class="furi-mark">あ</span> Read Mode
           </button>
           <button class="btn" id="new-deck-btn">＋ New deck</button>
         </div>
@@ -342,23 +363,13 @@
           <div class="card-detail-head">
             <div class="crumb-row">
               <button class="btn back-btn" id="card-back-btn" title="Back to the deck">‹ Back</button>
-              <nav class="crumbs">
-                <a href="#" class="crumb" data-goto="decks">Decks</a>
-                <span class="crumb-sep">›</span>
-                <a href="#" class="crumb" data-goto="deck" id="card-crumb-deck">MyDeck</a>
-                <span class="crumb-sep">›</span>
-                <span class="crumb current" id="card-crumb">天気</span>
-              </nav>
             </div>
             <div class="card-nav">
               <button class="btn furigana-toggle active" id="furigana-toggle-detail"
                       type="button" aria-pressed="true"
-                      title="Show kana readings over kanji">
-                <span class="furi-mark">あ</span> Furigana
+                      title="Show readings and hover any word for its dictionary meaning">
+                <span class="furi-mark">あ</span> Read Mode
               </button>
-              <button class="btn" id="card-prev-btn">‹ Previous</button>
-              <span class="card-pos" id="card-pos">1 / 1</span>
-              <button class="btn" id="card-next-btn">Next ›</button>
               <button class="btn toggle-edit" id="card-edit-btn">✎ Edit</button>
               <button class="btn danger" id="card-delete-btn">🗑 Delete</button>
               <button class="btn" id="card-cancel-btn" hidden>Cancel</button>
@@ -369,6 +380,18 @@
 
           <div class="create-grid">
             <div class="create-media">
+              <!-- Card pager (prev/next through the deck) above the image, mirroring
+                   the Create-card capture-stack layout. Hidden while editing. -->
+              <div class="capture-stack detail-pager" id="detail-pager">
+                <div class="stack-info">
+                  <span class="stack-label" id="detail-deck-label">MyDeck</span>
+                </div>
+                <div class="stack-nav">
+                  <button class="btn" id="card-prev-btn">‹ Previous</button>
+                  <span class="stack-pos" id="card-pos">1 / 1</span>
+                  <button class="btn" id="card-next-btn">Next ›</button>
+                </div>
+              </div>
               <div class="media-box" id="detail-media-box">
                 <svg viewBox="0 0 24 24" class="media-ico" aria-hidden="true">
                   <rect x="3" y="4" width="18" height="16" rx="2"/>
@@ -398,7 +421,17 @@
                   <div class="furigana-preview" id="detail-word-furi" hidden></div>
                 </div>
                 <div class="col">
-                  <label class="field-label">Translated word</label>
+                  <div class="field-head">
+                    <label class="field-label">Translated word</label>
+                    <button class="mini-btn" type="button" id="detail-translate-word-btn" hidden
+                            title="Translate the Word with MADLAD-400">
+                      <svg viewBox="0 0 24 24" class="mini-ico" aria-hidden="true">
+                        <path d="M4 5h7M8 4v1.5M9.5 5c0 4-2.5 6.5-5.5 7.5M6.5 8.5c0 2 2.5 3.5 5 4"/>
+                        <path d="M13.5 19l3.5-8 3.5 8M15 16h5"/>
+                      </svg>
+                      <span class="mini-label">Translate</span>
+                    </button>
+                  </div>
                   <input class="input" type="text" id="detail-word-tr" readonly />
                 </div>
               </div>
@@ -407,7 +440,17 @@
               <textarea class="input textarea" id="detail-sentence" rows="2" readonly></textarea>
               <div class="furigana-preview" id="detail-sentence-furi" hidden></div>
 
-              <label class="field-label">Translated sentence</label>
+              <div class="field-head">
+                <label class="field-label">Translated sentence</label>
+                <button class="mini-btn" type="button" id="detail-translate-sentence-btn" hidden
+                        title="Translate the Sentence with MADLAD-400">
+                  <svg viewBox="0 0 24 24" class="mini-ico" aria-hidden="true">
+                    <path d="M4 5h7M8 4v1.5M9.5 5c0 4-2.5 6.5-5.5 7.5M6.5 8.5c0 2 2.5 3.5 5 4"/>
+                    <path d="M13.5 19l3.5-8 3.5 8M15 16h5"/>
+                  </svg>
+                  <span class="mini-label">Translate</span>
+                </button>
+              </div>
               <textarea class="input textarea" id="detail-sentence-tr" rows="2" readonly></textarea>
 
               <label class="field-label">Note</label>
@@ -421,9 +464,9 @@
       <div class="page" id="page-about">
         <section class="panel about-hero">
           <div class="about-brand">
-            <span class="logo about-logo">文<span class="logo-a">A</span></span>
+            <img class="about-logo-img" src="logo.png" alt="Yomitori logo" />
             <div>
-              <h2 class="about-name">NihongoViewer</h2>
+              <h2 class="about-name">Yomitori</h2>
               <span class="about-ver">Version 1.0.0</span>
             </div>
           </div>
@@ -434,7 +477,7 @@
           </p>
           <div class="about-meta">
             <span>© 2026 Tanachot Srisombat. All rights reserved.</span>
-            <span>Licensed under the NihongoViewer End User License Agreement.</span>
+            <span>Licensed under the Yomitori End User License Agreement.</span>
             <a class="link" href="mailto:tanachot.Yomitori@hotmail.com">tanachot.Yomitori@hotmail.com</a>
           </div>
         </section>
@@ -442,7 +485,7 @@
         <section class="panel">
           <h2 class="panel-title">OPEN-SOURCE LICENSES</h2>
           <p class="about-note">
-            NihongoViewer is built with the open-source components below, each used
+            Yomitori is built with the open-source components below, each used
             under its own license. The complete license texts are included in the
             <a class="link" href="#" id="open-licenses-link">THIRD_PARTY_LICENSES</a>
             file shipped alongside the application.
@@ -461,6 +504,7 @@
                 <li><span class="lic-name">OpenCV</span><span class="lic-desc">Image processing</span><span class="lic-badge">Apache-2.0</span></li>
                 <li><span class="lic-name">fugashi + UniDic</span><span class="lic-desc">Japanese tokenizer &amp; dictionary</span><span class="lic-badge">MIT · BSD</span></li>
                 <li><span class="lic-name">jaconv</span><span class="lic-desc">Kana ↔ romaji conversion</span><span class="lic-badge">MIT</span></li>
+                <li><span class="lic-name">JMdict / JMnedict</span><span class="lic-desc">Read Mode dictionary · EDRDG (via jmdict-simplified)</span><span class="lic-badge amber">CC BY-SA 4.0</span></li>
               </ul>
             </div>
 
@@ -555,6 +599,9 @@
   <div class="lightbox" id="img-lightbox" hidden>
     <img class="lightbox-img" id="lightbox-img" alt="Captured frame (expanded)" />
   </div>
+
+  <!-- Read Mode: dictionary popup shown when hovering a word (see furigana.js) -->
+  <div class="rt-popup" id="rt-popup" role="tooltip" hidden></div>
 
   <script src="colorpicker.js"></script>
   <script src="nav.js"></script>

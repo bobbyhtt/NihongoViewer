@@ -37,7 +37,14 @@ Screen Capture -> OCR -> Translation -> Display
    with a user `names.json` override in the config dir — and (b) **sentence-split**, so
    a long multi-sentence line doesn't make the model drop a clause. Segments with no
    Japanese left (an already-romanized name) skip the model to avoid hallucinated
-   padding.
+   padding. **JMdict assist** (see `dictionary.py`): a single *word* (the Create-card
+   Word field) is glossed from JMdict first — the model romanizes rare/compound words
+   it doesn't know (`足コキ` → "Foot Koki" vs JMdict's "footjob"); only non-headwords
+   fall back to the model. And when the model echoes an untranslated *kanji* word in a
+   sentence (`刀剣` → "As a 刀剣 geek"), that word is replaced by its JMdict gloss
+   ("sword") instead of being dropped. Both best-effort and non-blocking (skip if the
+   index isn't built yet); kana-only residuals are still dropped (a hallucination's
+   "entry" is a grammatical aux description).
 4. **Display** — renders translated text on an overlay window using the user's
    configured mode, font, colors, and position.
 
@@ -58,7 +65,7 @@ stage — **do not** build a plugin system.
 | 6 | Background opacity | 0–100%, slider. |
 | 7 | Text position offset | X/Y offset in pixels. Default: cover the original text location. **This is the only positioning control — the app is in-place-only, no separate banner mode.** |
 | 8 | Text mode | Single sub vs Duo sub. Single = one line, replace-in-place. Duo = two lines (previous+current, or original+translation stacked) — **exact semantics TBD, see [Open decisions](#open-decisions).** |
-| 9 | Create-card capture hotkey | **Global** hotkey (like #2) — snapshots the current frame + its OCR/translation into the Create-card **capture stack** (max 20 entries, transient/not persisted). The user flips through the stack (prev/next), deletes entries, and loads one into the card form to save. Works when the app isn't focused. |
+| 9 | Create-card capture hotkey | **Global** hotkey (like #2) — snapshots the current frame + its OCR/translation into the Create-card **capture stack** (max 20 entries; **persisted across restarts** via `capture_stack.py`, so a user who snaps a batch and closes the app before writing the cards doesn't lose them). The user flips through the stack (prev/next), deletes entries, and loads one into the card form to save. Works when the app isn't focused. |
 
 - Persist settings across restarts in a user config file (JSON or TOML) in the
   platform-appropriate config directory via **`platformdirs`**.
@@ -168,11 +175,13 @@ NihongoViewer/
     madlad.py                 #   MADLAD-400-3B (the only backend; int8 CT2, torch-free)
     segment.py                #   sentence split + has-Japanese test (pre-translate)
     names.py                  #   romanize proper-noun katakana (ヤツシロ->Yatsushiro)
-    furigana.py               #   kana readings over kanji (天気->天気(てんき)) for cards
+    furigana.py               #   kana readings over kanji (天気->天気(てんき)); tokens() for Read Mode
+    dictionary.py             #   offline JMdict index (Read Mode hover lookup; SQLite, CC BY-SA)
     cache.py                  #   FuzzyCache — near-identical source reuse
     __init__.py               #   create_translator() factory (fuzzy-cached)
   overlay.py                  # Stage 4 — native Win32 per-pixel click-through overlay
   config.py                   # settings persistence (platformdirs JSON, load/save)
+  capture_stack.py            # Create-card capture stack persistence (survives restarts)
   hotkey.py                   # global hide/show hotkey (Win32 RegisterHotKey thread)
   fonts/                      # bundled overlay fonts (OFL, JP+Latin): Noto Sans JP,
                               #   M PLUS Rounded 1c, Shippori Mincho (+ licenses)

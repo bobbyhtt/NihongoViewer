@@ -67,7 +67,7 @@ def list_windows() -> list[dict]:
         if _is_cloaked(hwnd):
             return
         # Skip our own launcher window.
-        if title == "NihongoViewer":
+        if title == "Yomitori":
             return
         left, top, right, bottom = win32gui.GetWindowRect(hwnd)
         if right - left <= 0 or bottom - top <= 0:
@@ -214,11 +214,93 @@ def stop_capture_session() -> None:
             _session = None
 
 
-def to_data_url(img: Image.Image, max_width: int = 640) -> str:
-    """Encode a PIL image to a base64 PNG data URL, downscaled for preview."""
+def grab_region(x: int, y: int, w: int, h: int) -> Image.Image | None:
+    """Grab a screen-absolute rectangle as an RGB image (None if empty/failed).
+
+    Area mode reads raw screen pixels — whatever is visible inside the box —
+    rather than a specific window's surface, so no window has to be selected. Uses
+    GDI screen capture (`ImageGrab`); coordinates are virtual-desktop pixels (the
+    same space the area editor uses), so multi-monitor / negative origins work.
+    Note: this captures whatever is on top there, so the translate overlay must not
+    sit inside the detect box, and true exclusive-fullscreen apps may not be caught.
+    """
+    if w <= 0 or h <= 0:
+        return None
+    from PIL import ImageGrab
+
+    try:
+        img = ImageGrab.grab(bbox=(int(x), int(y), int(x) + int(w), int(y) + int(h)),
+                             all_screens=True)
+    except Exception:
+        return None
+    return img.convert("RGB") if img is not None else None
+
+
+def grab_screen(around: tuple | None = None) -> Image.Image | None:
+    """Grab a whole monitor as an RGB image.
+
+    The monitor is the one containing `around=(x, y)` (e.g. the detect box's
+    centre) so the shot matches where the text is; falls back to the primary
+    monitor. Used for the Create-card image in area mode — the card shows the full
+    screen for context while its text comes from just the detect box.
+    """
+    import win32api
+
+    try:
+        flag = (win32con.MONITOR_DEFAULTTONEAREST if around is not None
+                else win32con.MONITOR_DEFAULTTOPRIMARY)
+        hmon = win32api.MonitorFromPoint(tuple(around) if around else (0, 0), flag)
+        left, top, right, bottom = win32api.GetMonitorInfo(hmon)["Monitor"]
+        return grab_region(left, top, right - left, bottom - top)
+    except Exception:
+        w = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
+        h = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
+        return grab_region(0, 0, w, h)
+
+
+def to_data_url(img: Image.Image, max_width: int = 640, quality: int = 82) -> str:
+    """Encode a PIL image to a base64 **JPEG** data URL, downscaled for preview.
+
+    Game frames are photographic (character art, gradients), which PNG stores
+    poorly — a 960px card frame is ~0.4-1 MB as PNG but ~0.1-0.2 MB as JPEG-82,
+    with no meaningful quality loss for a preview/flashcard. That matters because
+    these frames are held in memory, marshaled over the UI bridge, and (for the
+    capture stack + saved cards) written to disk. JPEG can't hold an alpha channel,
+    so non-RGB inputs are flattened to RGB first (screen grabs have no useful
+    alpha anyway).
+    """
     if img.width > max_width:
         ratio = max_width / img.width
         img = img.resize((max_width, max(1, int(img.height * ratio))))
+    if img.mode != "RGB":
+        img = img.convert("RGB")
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    img.save(buf, format="JPEG", quality=quality)
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+# Frame-change detection (see main.Api.process_frame's tiered skipping). A tiny
+# grayscale "signature" of a frame; two frames are "the same" when their
+# signatures differ by less than a small threshold. Kept coarse and cheap — its
+# only job is to catch a screen where *nothing* moved (paused game, still
+# dialogue) so the pipeline can skip OCR/translation. A moving background (a
+# cutscene) fails this on purpose and falls through to the OCR-text check.
+_SIG_SIZE = 32               # 32x32 grayscale = 1024 samples, ~sub-millisecond
+_SIG_THRESHOLD = 2.0         # mean per-pixel abs diff (0-255) below which = "same"
+
+
+def frame_signature(img: Image.Image):
+    """A small grayscale array summarizing `img`, for cheap frame-change tests."""
+    import numpy as np
+
+    small = img.convert("L").resize((_SIG_SIZE, _SIG_SIZE))
+    return np.asarray(small, dtype=np.int16)
+
+
+def signatures_match(a, b) -> bool:
+    """True if two `frame_signature` arrays are near-identical (screen unchanged)."""
+    if a is None or b is None or a.shape != b.shape:
+        return False
+    import numpy as np
+
+    return float(np.abs(a - b).mean()) <= _SIG_THRESHOLD

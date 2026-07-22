@@ -33,6 +33,13 @@ DEFAULTS: dict = {
     "offset_y": 0,                  # overlay Y offset (px)
     "text_mode": "single",          # "single" (EN only) | "duo" (JA over EN)
     "furigana_show": True,          # show kana readings over kanji in the card UI
+    # Capture mode: "screen" reads the whole window (in-place overlay per region);
+    # "area" reads only `detect_area` and shows the combined translation in
+    # `translate_area`. Both rects are {x, y, w, h} in window CLIENT-area pixels
+    # (so they follow the window), or null until configured.
+    "capture_mode": "screen",       # "screen" | "area"
+    "detect_area": None,            # {x,y,w,h} client-px region to OCR (area mode)
+    "translate_area": None,         # {x,y,w,h} client-px box to draw into (area mode)
 }
 # Note: overlay visibility (the hide/show toggle) is intentionally NOT persisted —
 # it's a transient runtime state, so the overlay starts visible every launch.

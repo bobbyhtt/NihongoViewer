@@ -207,44 +207,20 @@ def _min_content_width(text: str, font, probe: ImageDraw.ImageDraw) -> int:
     return int(widest + 0.999)
 
 
-def _fit_text(text: str, family: str, max_size: int, avail_w: int, avail_h: int,
-              spacing: int, probe: ImageDraw.ImageDraw):
-    """Largest font (≤ max_size, ≥ 9px) whose wrapped text fits the block height.
-
-    Wrapping breaks at spaces only (never mid-word for Latin). If the widest
-    whole word is wider than `avail_w`, the wrap width is widened to fit it — the
-    caller then extends the block a little rather than splitting the word.
-
-    Returns (font, wrapped_text, content_w); `content_w` is the wrap width used
-    (≥ avail_w when a long word forced an extension). Falls back to the smallest
-    size tried if the text still can't fit the height.
-    """
-    fallback = None
-    for size in range(max(max_size, 9), 8, -1):
-        font = _resolve_font(family, size)
-        # Widen only as much as the longest un-splittable word needs.
-        content_w = max(avail_w, _min_content_width(text, font, probe))
-        wrapped = _wrap_to_width(text, font, content_w, probe)
-        x0, y0, x1, y1 = probe.multiline_textbbox((0, 0), wrapped, font=font, spacing=spacing)
-        if (y1 - y0) <= avail_h:
-            return font, wrapped, content_w
-        # Nothing fits yet: keep the smallest size tried as the fallback, so if
-        # the text never fits the caller extends the block by as little as possible.
-        fallback = (font, wrapped, content_w)
-    return fallback
-
-
 def render_text_image(text: str, style: dict, min_size: tuple[int, int] | None = None,
-                      fit_box: tuple[int, int] | None = None) -> Image.Image:
+                      fit_box: tuple[int, int] | None = None,
+                      max_w: int | None = None) -> Image.Image:
     """Render translated text + background box to an RGBA image (per-pixel alpha).
 
     Text uses the chosen font at its normal weight, over a **slim** background
     box (small vertical padding).
 
-    With `fit_box=(w, h)`, the text is instead wrapped and shrunk to fit *inside*
-    that block (in captured pixels) and the background box is sized to the block
-    — so a long translation stays within the detected text region (and covers
-    the original Japanese) instead of overflowing past it.
+    With `fit_box=(w, h)`, the text is wrapped and the background box is grown to
+    fit it at the user's chosen size: the box uses `fit_box` as its minimum (so it
+    still covers the original Japanese) and stretches **right** — up to `max_w`,
+    the space to the window's right edge — and **down** as the wrapped text needs.
+    The font is **not** shrunk to cram inside the region (that made the size
+    setting useless for small regions); the frame grows instead.
     """
     size = int(style.get("size", 18))
     text_rgb = _hex_to_rgb(style.get("text_color", "#ffffff"))
@@ -255,7 +231,7 @@ def render_text_image(text: str, style: dict, min_size: tuple[int, int] | None =
     text = text or " "
 
     if fit_box is not None:
-        return _render_fitted(text, style.get("font", "Meiryo"), size, fit_box,
+        return _render_fitted(text, style.get("font", "Meiryo"), size, fit_box, max_w,
                               text_rgb, bg_rgb, bg_alpha, pad_x, pad_y, spacing)
 
     font = _resolve_font(style.get("font", "Meiryo"), size)
@@ -283,37 +259,46 @@ def render_text_image(text: str, style: dict, min_size: tuple[int, int] | None =
     return img
 
 
-def _render_fitted(text, family, size, fit_box, text_rgb, bg_rgb, bg_alpha,
+def _render_fitted(text, family, size, fit_box, max_w, text_rgb, bg_rgb, bg_alpha,
                    pad_x, pad_y, spacing) -> Image.Image:
-    """Render `text` wrapped + shrunk to fit inside a `fit_box`-sized block.
+    """Render `text` at the user's size, wrapped to the region width, growing DOWN.
 
-    The block may be extended a little when the text can't fit otherwise:
-    outward in **width** so a long word never has to be split, and downward in
-    **height** when even the smallest font can't stack every line inside the
-    block — extending to show all lines is preferred to clipping them.
+    `fit_box` (the detected region) is the box's minimum and anchor. The text is
+    drawn at the user's `size` and wrapped to the region's own **width** — so it
+    stays inside the frame horizontally and, when the translation is longer than
+    the region, the box grows **downward** (more lines) rather than stretching to
+    the right. The box only ever widens if a single word is too long to fit the
+    region's width (it can't be broken); `max_w` caps that so it never runs past
+    the window edge. The font is never shrunk — the frame grows to keep the size.
     """
     block_w = max(int(fit_box[0]), pad_x * 2 + 8)
     block_h = max(int(fit_box[1]), pad_y * 2 + 8)
-    avail_w = max(block_w - pad_x * 2, 1)
-    avail_h = max(block_h - pad_y * 2, 1)
 
+    font = _resolve_font(family, int(size))
     probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-    font, wrapped, content_w = _fit_text(text, family, size, avail_w, avail_h, spacing, probe)
+    # Wrap within the region's own width — never narrower than the longest word (so
+    # an English word never breaks mid-word). We deliberately do NOT widen the wrap
+    # to pack fewer lines: extra length flows downward, not rightward.
+    avail_w = max(block_w - pad_x * 2, _min_content_width(text, font, probe))
+    wrapped = _wrap_to_width(text, font, avail_w, probe)
     tx0, ty0, tx1, ty1 = probe.multiline_textbbox((0, 0), wrapped, font=font, spacing=spacing)
-    text_h = ty1 - ty0
+    text_w, text_h = tx1 - tx0, ty1 - ty0
 
-    # Grow the box rightward only if a long word needed more room than the block,
-    # and downward only if the wrapped text is taller than the block (so the last
-    # line isn't clipped). Neither grows when the text already fits.
-    w = max(block_w, content_w + pad_x * 2)
-    h = max(block_h, text_h + pad_y * 2)
+    # Grow DOWN to fit every line; grow right only if a long word forced the wrap
+    # past the region width (capped at the window edge so it can't run off-screen).
+    w = max(block_w, int(text_w) + pad_x * 2)
+    if max_w:
+        w = min(w, max(int(max_w), block_w))
+    h = max(block_h, int(text_h) + pad_y * 2)
 
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     draw.rectangle([0, 0, w - 1, h - 1], fill=(*bg_rgb, bg_alpha))
-    # Center the wrapped text within the box (equal top/bottom, left-aligned).
+    # Top-align the text (left-aligned, anchored to the top with pad_y). When the
+    # box grows downward past the region, the text stays at the top — over the
+    # original Japanese — instead of drifting to the middle of the taller box.
     ox = pad_x - tx0
-    oy = (h - text_h) // 2 - ty0
+    oy = pad_y - ty0
     draw.multiline_text((ox, oy), wrapped, font=font, fill=(*text_rgb, 255),
                         spacing=spacing, align="left")
     return img
@@ -332,7 +317,7 @@ def compose_canvas(items: list[dict], style: dict):
         if not text:
             continue
         tile = render_text_image(text, style, min_size=it.get("cover"),
-                                 fit_box=it.get("box"))
+                                 fit_box=it.get("box"), max_w=it.get("max_w"))
         tiles.append((tile, int(it["x"]), int(it["y"])))
     if not tiles:
         return None, 0, 0
@@ -401,11 +386,19 @@ class Overlay:
             with self._lock:
                 pending, self._pending = self._pending, None
             if pending:
-                if pending[0] == "show":
-                    self._draw(pending[1], pending[2], pending[3])
-                elif self._visible:
-                    user32.ShowWindow(self._hwnd, SW_HIDE)
-                    self._visible = False
+                # A single draw/show failure (e.g. a transient GDI allocation
+                # failure) must NEVER escape this loop: if it did, the thread would
+                # die and the overlay would stay gone for the rest of the session —
+                # Stop/Start couldn't bring it back, since update()/hide() would
+                # only queue a _pending nothing consumes. Swallow and keep looping.
+                try:
+                    if pending[0] == "show":
+                        self._draw(pending[1], pending[2], pending[3])
+                    elif self._visible:
+                        user32.ShowWindow(self._hwnd, SW_HIDE)
+                        self._visible = False
+                except Exception:
+                    pass
             user32.MsgWaitForMultipleObjects(0, None, False, 16, 0x04FF)
 
     def _create_window(self) -> None:
@@ -439,49 +432,60 @@ class Overlay:
 
     def _draw(self, img: Image.Image, x: int, y: int) -> None:
         w, h = img.size
+        if w <= 0 or h <= 0:  # nothing to show — and a 0-size DIB would fail
+            return
         screen_dc = user32.GetDC(0)
         mem_dc = gdi32.CreateCompatibleDC(screen_dc)
+        hbmp = old = None
+        # try/finally so the DC + bitmap are ALWAYS released, even if a step below
+        # raises. A leak here would exhaust the process GDI handle pool over time
+        # and make CreateDIBSection start failing — the very fault that used to
+        # kill the overlay thread; releasing every time keeps it from escalating.
+        try:
+            bmi = BITMAPINFOHEADER()
+            bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+            bmi.biWidth = w
+            bmi.biHeight = -h  # top-down so PIL's row order is preserved
+            bmi.biPlanes = 1
+            bmi.biBitCount = 32
+            bmi.biCompression = BI_RGB
 
-        bmi = BITMAPINFOHEADER()
-        bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-        bmi.biWidth = w
-        bmi.biHeight = -h  # top-down so PIL's row order is preserved
-        bmi.biPlanes = 1
-        bmi.biBitCount = 32
-        bmi.biCompression = BI_RGB
+            bits = ctypes.c_void_p()
+            hbmp = gdi32.CreateDIBSection(
+                screen_dc, ctypes.byref(bmi), DIB_RGB_COLORS, ctypes.byref(bits), None, 0
+            )
+            if not hbmp or not bits:
+                return  # GDI is out of memory this frame; try again next frame
+            old = gdi32.SelectObject(mem_dc, hbmp)
 
-        bits = ctypes.c_void_p()
-        hbmp = gdi32.CreateDIBSection(
-            screen_dc, ctypes.byref(bmi), DIB_RGB_COLORS, ctypes.byref(bits), None, 0
-        )
-        old = gdi32.SelectObject(mem_dc, hbmp)
+            # RGBA (straight alpha) -> BGRA premultiplied, as UpdateLayeredWindow wants.
+            rgba = np.asarray(img, dtype=np.uint8)
+            a = rgba[:, :, 3:4].astype(np.uint16)
+            bgra = np.empty_like(rgba)
+            bgra[:, :, 0] = (rgba[:, :, 2] * a[:, :, 0] // 255).astype(np.uint8)  # B
+            bgra[:, :, 1] = (rgba[:, :, 1] * a[:, :, 0] // 255).astype(np.uint8)  # G
+            bgra[:, :, 2] = (rgba[:, :, 0] * a[:, :, 0] // 255).astype(np.uint8)  # R
+            bgra[:, :, 3] = rgba[:, :, 3]
+            raw = bgra.tobytes()
+            ctypes.memmove(bits, raw, len(raw))
 
-        # RGBA (straight alpha) -> BGRA premultiplied, as UpdateLayeredWindow wants.
-        rgba = np.asarray(img, dtype=np.uint8)
-        a = rgba[:, :, 3:4].astype(np.uint16)
-        bgra = np.empty_like(rgba)
-        bgra[:, :, 0] = (rgba[:, :, 2] * a[:, :, 0] // 255).astype(np.uint8)  # B
-        bgra[:, :, 1] = (rgba[:, :, 1] * a[:, :, 0] // 255).astype(np.uint8)  # G
-        bgra[:, :, 2] = (rgba[:, :, 0] * a[:, :, 0] // 255).astype(np.uint8)  # R
-        bgra[:, :, 3] = rgba[:, :, 3]
-        raw = bgra.tobytes()
-        ctypes.memmove(bits, raw, len(raw))
-
-        blend = BLENDFUNCTION(AC_SRC_OVER, 0, 255, AC_SRC_ALPHA)
-        pt_dst = wintypes.POINT(int(x), int(y))
-        pt_src = wintypes.POINT(0, 0)
-        size = wintypes.SIZE(w, h)
-        # Update the layered content (position, size and pixels atomically) FIRST,
-        # then reveal the window — so it never briefly shows stale/empty content.
-        user32.UpdateLayeredWindow(
-            self._hwnd, screen_dc, ctypes.byref(pt_dst), ctypes.byref(size),
-            mem_dc, ctypes.byref(pt_src), 0, ctypes.byref(blend), ULW_ALPHA,
-        )
-        if not self._visible:
-            user32.ShowWindow(self._hwnd, SW_SHOWNOACTIVATE)
-            self._visible = True
-
-        gdi32.SelectObject(mem_dc, old)
-        gdi32.DeleteObject(hbmp)
-        gdi32.DeleteDC(mem_dc)
-        user32.ReleaseDC(0, screen_dc)
+            blend = BLENDFUNCTION(AC_SRC_OVER, 0, 255, AC_SRC_ALPHA)
+            pt_dst = wintypes.POINT(int(x), int(y))
+            pt_src = wintypes.POINT(0, 0)
+            size = wintypes.SIZE(w, h)
+            # Update the layered content (position, size and pixels atomically) FIRST,
+            # then reveal the window — so it never briefly shows stale/empty content.
+            user32.UpdateLayeredWindow(
+                self._hwnd, screen_dc, ctypes.byref(pt_dst), ctypes.byref(size),
+                mem_dc, ctypes.byref(pt_src), 0, ctypes.byref(blend), ULW_ALPHA,
+            )
+            if not self._visible:
+                user32.ShowWindow(self._hwnd, SW_SHOWNOACTIVATE)
+                self._visible = True
+        finally:
+            if old:
+                gdi32.SelectObject(mem_dc, old)
+            if hbmp:
+                gdi32.DeleteObject(hbmp)
+            gdi32.DeleteDC(mem_dc)
+            user32.ReleaseDC(0, screen_dc)

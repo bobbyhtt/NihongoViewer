@@ -15,20 +15,24 @@ def _tidy_gloss(text: str) -> str:
     """Collapse the repetition a sentence-MT model emits when padding a word.
 
     A bare word makes these models pad ("天気" -> "Weather Weather forecast",
-    "学生。" -> "Students. Students."). We drop consecutive duplicate sentences and
-    words (case-insensitive) and strip the trailing sentence punctuation, leaving a
-    concise dictionary-style gloss ("The weather", "Students").
+    "学生。" -> "Students. Students.", "ありがとう" -> "Thank you, thank you"). We drop
+    consecutive duplicate clauses (split on sentence marks AND commas, since the
+    padding often repeats after a comma) and consecutive duplicate words
+    (case-insensitive), then strip trailing punctuation — leaving a concise
+    dictionary-style gloss ("The weather", "Students", "Thank you").
     """
     text = (text or "").strip()
     if not text:
         return text
-    # 1) Drop consecutive duplicate sentences ("Students. Students." -> "Students.").
+    # 1) Drop consecutive duplicate clauses ("Students. Students." -> "Students.",
+    #    "Thank you, thank you" -> "Thank you"). Comma-split too: the model repeats
+    #    a short gloss after a comma as often as after a full stop.
     kept: list[tuple[str, str]] = []
-    for part in re.split(r"(?<=[.!?。．！？])\s*", text):
+    for part in re.split(r"(?<=[.!?。．！？,、，])\s*", text):
         part = part.strip()
         if not part:
             continue
-        norm = part.rstrip(_TERMINATORS).strip().lower()
+        norm = part.rstrip(_TERMINATORS + ",、，").strip().lower()
         if kept and kept[-1][1] == norm:
             continue
         kept.append((part, norm))
@@ -61,13 +65,31 @@ class Translator(ABC):
     def translate_word(self, text: str) -> str:
         """Translate a single vocabulary word/term to a concise gloss.
 
-        Sentence-level MT models pad a bare word into a whole clause ("学生" ->
-        "Students are students."). Appending a sentence terminator coaxes a short,
-        complete rendering, and `_tidy_gloss` removes the leftover repetition — so
-        the Create-card Word field gets "Student(s)", not a padded sentence. Goes
-        through `translate()` (hence the fuzzy cache when wrapped)."""
+        JMdict is authoritative for vocabulary, so a word that's a dictionary
+        headword gets its real gloss straight from JMdict — a sentence-MT model
+        romanizes rare or compound words it doesn't know (足コキ -> "Foot Koki",
+        where JMdict has "footjob"). Only non-headwords (names, phrases, novel
+        coinages) fall back to the model.
+
+        The model path: sentence-level MT pads a bare word into a whole clause
+        ("学生" -> "Students are students."). Appending a sentence terminator coaxes
+        a short, complete rendering, and `_tidy_gloss` removes the leftover
+        repetition. Goes through `translate()` (hence the fuzzy cache when wrapped).
+        """
         core = (text or "").strip()
         if not core:
             return ""
-        src = core if core[-1] in _TERMINATORS else core + "。"
-        return _tidy_gloss(self.translate(src))
+        # 1) Dictionary-first (best-effort, non-blocking — see dictionary.gloss).
+        try:
+            from . import dictionary
+            gloss = dictionary.gloss(core)
+        except Exception:
+            gloss = ""
+        # 2) Not a headword — let the model gloss it (the glossary in names.protect
+        #    still corrects terms the model mangles, e.g. パイスリ -> "breast rubbing").
+        if not gloss:
+            src = core if core[-1] in _TERMINATORS else core + "。"
+            gloss = _tidy_gloss(self.translate(src))
+        # Capitalize like a translation ("breast rubbing" -> "Breast rubbing"); the
+        # in-sentence path keeps the lowercase glossary/dictionary form.
+        return gloss[:1].upper() + gloss[1:] if gloss else gloss

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Steam / Option A build for NihongoViewer (commercial-safe, MeikiOCR + MADLAD).
+# Steam / Option A build for Yomitori (commercial-safe, MeikiOCR + MADLAD).
 # Produces a FOLDER build at build/main.dist/ (NOT onefile — Steam ships folders,
 # and onefile would re-extract the bundled models to temp on every launch).
 # Model weights are shipped in build/main.dist/models/ (see copy_models step),
@@ -19,6 +19,8 @@ cd "C:/Users/bobby/Documents/NihongoViewer/NihongoViewer" || exit 1
   --include-package-data=clr_loader \
   --include-package=webview \
   --include-package-data=webview \
+  --windows-icon-from-ico=icon.ico \
+  --include-data-files=icon.ico=icon.ico \
   --include-data-dir=ui=ui \
   --include-data-dir=fonts=fonts \
   --include-package=ocr \
@@ -29,6 +31,6 @@ cd "C:/Users/bobby/Documents/NihongoViewer/NihongoViewer" || exit 1
   --include-package=sentencepiece \
   --include-package=huggingface_hub \
   --output-dir=build \
-  --output-filename=NihongoViewer.exe \
+  --output-filename=Yomitori.exe \
   main.py
 echo "EXIT_CODE=$?"

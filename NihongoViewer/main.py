@@ -17,12 +17,13 @@ from pathlib import Path
 import webview
 
 import capture
+import capture_stack
 import config
 import decks
 import hotkey
 import ocr
 import translate
-from translate import furigana
+from translate import dictionary, furigana
 
 # --- Bundled models (Steam / offline build) ----------------------------------
 # When a `models/` folder ships next to the app (as in the Steam depot), use it
@@ -39,6 +40,7 @@ if _MODELS_DIR.is_dir():
 
 UI_DIR = Path(__file__).parent / "ui"
 INDEX_HTML = UI_DIR / "index.html"
+APP_ICON = Path(__file__).parent / "icon.ico"  # window / taskbar icon
 
 
 def _safe_filename(name: str) -> str:
@@ -73,6 +75,14 @@ class Api:
         # next capture tick. Cleared whenever there's nothing on screen.
         self._last_hwnd: int | None = None
         self._last_pairs: list | None = None
+        # Frame-change detection state (see process_frame's tiered skipping):
+        # signature of the last *processed* frame, and the last OCR'd text. Let a
+        # static screen (or a cutscene with unchanged text) skip the expensive work.
+        self._last_frame_sig = None
+        self._last_ocr_text: str | None = None
+        # Area-mode last draw (ja, en, area) for live-restyle redraw; None in screen
+        # mode (which uses _last_pairs instead).
+        self._last_area_draw = None
         self._lock = threading.Lock()
 
         # Global hide/show hotkey — works even when our window isn't focused.
@@ -93,14 +103,24 @@ class Api:
         return capture.list_windows()
 
     def start_capture(self, hwnd) -> dict:
-        # Un-minimize the target window (without activating it) so it renders.
-        capture.show_window(int(hwnd))
+        # Un-minimize the target window (without activating it) so it renders. Area
+        # mode grabs the screen directly, so it may Start with no window selected —
+        # release any window session left over from a previous screen-mode run.
+        if hwnd:
+            capture.show_window(int(hwnd))
+        else:
+            capture.stop_capture_session()
         with self._lock:
             self._capturing = True
             # Start always shows the overlay again, even if it was hidden via the
             # hotkey before the previous Stop.
             self._overlay_enabled = True
-        return {"ok": True}
+            # Fresh session: forget the last frame/text so the first frame is
+            # always processed (never skipped as "unchanged" from a prior run).
+            self._last_frame_sig = None
+            self._last_ocr_text = None
+        # Report the state so the UI's overlay toggle starts in sync ("Shown").
+        return {"ok": True, "overlay_visible": True}
 
     def stop_capture(self) -> dict:
         # Mark stopped AND hide under the SAME lock a drawing frame uses. That
@@ -110,8 +130,62 @@ class Api:
         with self._lock:
             self._capturing = False
             self._hide_overlay_locked()
+            self._last_frame_sig = None
+            self._last_ocr_text = None
         capture.stop_capture_session()  # release the WGC capture
         return {"ok": True}
+
+    def configure_area(self) -> dict:
+        """Open the fullscreen editor to place the Area-mode detect/translate boxes.
+
+        Draggable/resizable rectangles over the whole desktop (area mode grabs raw
+        screen pixels, so no window is involved); blocks until the user saves
+        (Enter) or cancels (Esc). Starts from the saved rectangles, or sensible
+        defaults (detect = lower-middle dialogue band; translate = just below) the
+        first time. Saves the result and switches to Area mode. Coordinates are
+        absolute screen px.
+        """
+        with self._lock:
+            detect = self._settings["detect_area"]
+            trans = self._settings["translate_area"]
+        if not detect or not trans:
+            import win32api
+            import win32con
+
+            sw = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
+            sh = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
+            detect = detect or {"x": int(sw * 0.15), "y": int(sh * 0.60),
+                                "w": int(sw * 0.70), "h": int(sh * 0.20)}
+            trans = trans or {"x": int(sw * 0.15), "y": int(sh * 0.82),
+                              "w": int(sw * 0.70), "h": int(sh * 0.14)}
+
+        import area_editor  # imported lazily (Windows-only, native window)
+        # Get our own window out of the way while the user drags the boxes, then
+        # bring it back — whatever the outcome (save, cancel, or error).
+        window = self._window
+        if window is not None:
+            try:
+                window.minimize()
+            except Exception:
+                pass
+        try:
+            result = area_editor.edit(detect, trans)
+        except Exception as exc:
+            return {"ok": False, "error": f"Couldn't open the area editor: {exc}"}
+        finally:
+            if window is not None:
+                try:
+                    window.restore()
+                except Exception:
+                    pass
+        if result is None:
+            return {"ok": True, "cancelled": True}
+        with self._lock:
+            self._settings["capture_mode"] = "area"
+            self._settings["detect_area"] = result["detect_area"]
+            self._settings["translate_area"] = result["translate_area"]
+            config.save(self._settings)
+        return {"ok": True, **result}
 
 
     # -- OCR stage ------------------------------------------------------------
@@ -217,6 +291,50 @@ class Api:
         except Exception as exc:
             return {"ok": False, "error": f"Furigana failed: {exc}"}
         return {"ok": True, "segments": segments, "reading": reading}
+
+    # -- Read Mode: per-word tokens + offline dictionary lookup ----------------
+    def read_tokens(self, text: str) -> dict:
+        """Split a JA string into per-word tokens for the Read Mode preview.
+
+        Each token carries its ruby ``segments`` plus the dictionary ``query``
+        (lemma), ``reading`` and ``pos`` the hover popup needs. Best-effort: an
+        analyzer failure returns the string as one non-lookup token so the preview
+        still renders. See ``translate.furigana.tokens``.
+        """
+        text = (text or "").strip()
+        if not text:
+            return {"ok": True, "tokens": []}
+        try:
+            toks = furigana.tokens(text)
+        except Exception as exc:
+            return {"ok": False, "error": f"Tokenize failed: {exc}"}
+        return {"ok": True, "tokens": toks}
+
+    def lookup(self, word: str, reading: str = "", pos: str = "") -> dict:
+        """Offline JMdict lookup for a hovered word (see translate.dictionary).
+
+        Returns ``{ok, entries, attribution}`` when ready, ``{ok: False,
+        loading: True}`` while the index is still being built on first run, or
+        ``{ok: False, error}`` if the build failed. Never blocks the UI: the
+        index is built by a background thread started in ``main``.
+        """
+        word = (word or "").strip()
+        if not word:
+            return {"ok": True, "entries": []}
+        state = dictionary.status()
+        if state["state"] != "ready":
+            if state["state"] == "error":
+                return {"ok": False, "error": state["error"] or "Dictionary unavailable."}
+            return {"ok": False, "loading": True}
+        try:
+            entries = dictionary.lookup(word, reading or None, pos or None)
+        except Exception as exc:
+            return {"ok": False, "error": f"Lookup failed: {exc}"}
+        return {"ok": True, "entries": entries, "attribution": dictionary.ATTRIBUTION}
+
+    def dict_status(self) -> dict:
+        """Read Mode dictionary build/load state ({state, error}) for the UI."""
+        return dictionary.status()
 
     # -- decks / cards (flashcard feature) ------------------------------------
     def list_decks(self) -> list[dict]:
@@ -330,19 +448,45 @@ class Api:
     CARD_IMAGE_WIDTH = 960
 
     def capture_card_image(self) -> dict:
-        """Grab the current frame at card resolution (~960px) for a saved card.
+        """Grab the card image at card resolution (~960px) for a saved card.
 
-        Reuses the running capture session's latest frame (no extra window grab),
-        so it only works while capturing. Returns {ok, frame} or an error.
+        Screen mode reuses the running window session's latest frame. Area mode
+        grabs the WHOLE screen (the monitor holding the detect box) so the card
+        shows the full context — the card's *text* still comes from just the detect
+        box (via the UI's last capture). Only works while capturing. {ok, frame}.
         """
         with self._lock:
             capturing = self._capturing
+            mode = self._settings["capture_mode"]
+            detect_area = self._settings["detect_area"]
         if not capturing:
             return {"ok": False, "error": "not capturing"}
-        img = capture.current_frame_image()
+        if mode == "area":
+            around = None
+            if detect_area:
+                around = (detect_area["x"] + detect_area["w"] // 2,
+                          detect_area["y"] + detect_area["h"] // 2)
+            img = capture.grab_screen(around)
+        else:
+            img = capture.current_frame_image()
         if img is None:
             return {"ok": False, "error": "no frame available yet"}
         return {"ok": True, "frame": capture.to_data_url(img, max_width=self.CARD_IMAGE_WIDTH)}
+
+    # -- capture stack persistence --------------------------------------------
+    def load_capture_stack(self) -> list[dict]:
+        """Return the persisted Create-card capture stack (oldest → newest).
+
+        Restored by the UI on launch so a user who snapped a batch of frames and
+        closed the app before writing the cards doesn't lose them. See
+        ``capture_stack``.
+        """
+        return capture_stack.load()
+
+    def save_capture_stack(self, stack: list) -> dict:
+        """Persist the Create-card capture stack (the UI calls this on each change)."""
+        capture_stack.save(stack)
+        return {"ok": True}
 
     # -- settings / overlay stage ---------------------------------------------
     def get_settings(self) -> dict:
@@ -417,8 +561,50 @@ class Api:
                 return
             self._overlay_enabled = not self._overlay_enabled
             enabled = self._overlay_enabled
-        if not enabled:
-            self._hide_overlay()  # showing again happens on the next frame
+        self._apply_overlay_enabled(enabled)
+
+    def set_overlay_visible(self, visible: bool) -> dict:
+        """Show/hide the overlay from the SETTING-panel toggle (mirrors the hotkey).
+
+        Only meaningful while capturing; returns the effective state so the toggle
+        reflects reality (it stays off when nothing is being captured).
+        """
+        with self._lock:
+            if not self._capturing:
+                return {"ok": True, "visible": False, "capturing": False}
+            self._overlay_enabled = bool(visible)
+            enabled = self._overlay_enabled
+        self._apply_overlay_enabled(enabled, notify_ui=False)
+        return {"ok": True, "visible": enabled, "capturing": True}
+
+    def _apply_overlay_enabled(self, enabled: bool, *, notify_ui: bool = True) -> None:
+        """Realize a new overlay-visible state: redraw or hide, and sync the UI.
+
+        `notify_ui` pokes the SETTING-panel toggle — wanted when the change came
+        from the global hotkey (the UI didn't initiate it), skipped when the UI
+        toggle itself called us (it already updates from the return value).
+        """
+        if enabled:
+            self._refresh_overlay()  # show again immediately from the last frame
+        else:
+            self._hide_overlay()
+        if notify_ui:
+            self._notify_overlay_state(enabled)
+
+    def _notify_overlay_state(self, enabled: bool) -> None:
+        """Poke the UI so the overlay toggle reflects a hotkey-driven change."""
+        with self._lock:
+            window = self._window
+        if window is None:
+            return
+        flag = "true" if enabled else "false"
+        try:
+            window.evaluate_js(
+                "window.NihongoViewer && window.NihongoViewer.onOverlayToggled"
+                f" && window.NihongoViewer.onOverlayToggled({flag})"
+            )
+        except Exception:
+            pass  # a failed UI poke must not kill the hotkey thread
 
     def _capture_card_hotkey(self) -> None:
         """Push the current frame + translation into the Create-card stack.
@@ -451,9 +637,19 @@ class Api:
             translator = self._translator
             style = {k: self._settings[k] for k in config.STYLE_KEYS}
             text_mode = self._settings["text_mode"]
+            mode = self._settings["capture_mode"]
+            detect_area = self._settings["detect_area"]
+            translate_area = self._settings["translate_area"]
         if engine is None:
             return {"ok": False, "error": "OCR engine not ready"}
 
+        # Area mode grabs raw screen pixels inside the detect box (no window needed)
+        # and draws the combined translation in the translate box — a separate path.
+        if mode == "area" and detect_area and translate_area:
+            return self._process_area(engine, translator, style, text_mode,
+                                      detect_area, translate_area)
+
+        # Screen mode: capture the whole target window.
         img = capture.capture_window_image(int(hwnd))
         if img is None:
             # Distinguish a closed window (stop for good) from a transient miss.
@@ -466,6 +662,18 @@ class Api:
                         "error": "The target window was closed"}
             return {"ok": False, "error": "Could not capture this window"}
 
+        # Tier 0 — did anything change? A static screen (paused game, still dialogue,
+        # menu) matches the last processed frame, so skip OCR AND translation and
+        # leave the overlay as-is. A moving background (a cutscene) fails this on
+        # purpose and falls to the Tier-2 text check.
+        sig = capture.frame_signature(img)
+        with self._lock:
+            last_sig = self._last_frame_sig
+        if capture.signatures_match(sig, last_sig):
+            return {"ok": True, "unchanged": True}
+        with self._lock:
+            self._last_frame_sig = sig  # this frame becomes the new reference
+
         # This one capture feeds both the preview thumbnail and OCR, so the UI
         # doesn't have to grab the window a second time (halving PrintWindow's
         # disturbance of the source game).
@@ -477,11 +685,28 @@ class Api:
             return {"ok": True, "frame": frame, "ja": "", "en": "", "error": f"OCR failed: {exc}"}
 
         ja = result.text
+        # Tier 2 — did the TEXT change? The frame moved (Tier 0 passed), but if the
+        # OCR'd text is identical (a cutscene playing behind a steady subtitle) the
+        # translation is unchanged too, so skip it and keep the overlay. Covers the
+        # empty case as well: empty == empty means the screen is still blank.
+        #
+        # TODO(region-hashing): during a cutscene this still runs OCR (~200 ms) every
+        # frame just to conclude the text is unchanged. A future tier could hash only
+        # the previous frame's text-region boxes and skip OCR when they're steady,
+        # forcing a full OCR every ~1-2 s to catch new text appearing elsewhere.
+        # Deferred: OCR isn't the bottleneck (translation is, and it's cached here).
+        with self._lock:
+            if ja == self._last_ocr_text:
+                return {"ok": True, "unchanged": True, "frame": frame}
+
         if not ja.strip():
             self._hide_overlay()
+            with self._lock:
+                self._last_ocr_text = ja
             return {"ok": True, "frame": frame, "ja": "", "en": ""}
 
         if translator is None:
+            # Don't record the text — retry translating it once the model loads.
             return {"ok": True, "frame": frame, "ja": ja, "en": "", "note": "translator loading"}
 
         # Group wrapped line-regions into text blocks first, then translate each
@@ -491,22 +716,95 @@ class Api:
         # genuinely separate element (a name, a far menu button) its own block, so
         # the overlay still draws a box over each. (See ocr.group_lines.)
         regions = [r for r in ocr.group_lines(result.regions) if r.text.strip()]
+        if not regions:  # OCR text but nothing boxed to draw — clear the overlay
+            self._hide_overlay()
+            with self._lock:
+                self._last_ocr_text = ja
+            return {"ok": True, "frame": frame, "ja": ja, "en": ""}
+
+        # Translate region-by-region and redraw after EACH, so a text-heavy screen
+        # fills in progressively (the first line appears in ~1 s) instead of leaving
+        # a stale overlay until the whole screen finishes. Each region's own
+        # sentences are still batched inside translate(). Each redraw re-checks
+        # _capturing under the lock, so a Stop mid-screen halts cleanly.
+        pairs: list = []
         try:
-            pairs = [(r, translator.translate(r.text)) for r in regions]
+            for r in regions:
+                pairs.append((r, translator.translate(r.text)))
+                with self._lock:
+                    if not self._capturing:
+                        return {"ok": True, "frame": frame, "ja": ja, "en": "", "stopped": True}
+                    self._last_hwnd, self._last_pairs = int(hwnd), list(pairs)
+                    self._last_area_draw = None  # screen mode — not area mode
+                    if self._overlay_enabled:
+                        self._draw_overlay(int(hwnd), pairs, style, text_mode)
+                    else:
+                        self._hide_overlay_locked()
         except Exception as exc:
             return {"ok": True, "frame": frame, "ja": ja, "en": "", "error": f"translate failed: {exc}"}
         en = "\n".join(t for _, t in pairs if t.strip())
+        with self._lock:
+            self._last_ocr_text = ja  # Tier-2 reference — full screen now drawn
+        return {"ok": True, "frame": frame, "ja": ja, "en": en}
 
-        # Remember this frame so a live style/offset change can redraw instantly,
-        # then commit the draw — all under the lock. Stop hides under the same
-        # lock, so a stale in-flight frame can't interleave with (and undo) it: if
-        # Stop already ran, _capturing is False here and we bail without drawing.
+    def _process_area(self, engine, translator, style, text_mode,
+                      detect_area, translate_area) -> dict:
+        """Area mode: grab the detect box off the screen, translate it, draw in box.
+
+        Same tiered skipping as screen mode (Tier 0 hash, Tier 2 text), but the
+        source is a raw screen-region grab (no window) and the whole detect box is
+        translated as one block into the fixed translate box at absolute coords.
+        """
+        img = capture.grab_region(detect_area["x"], detect_area["y"],
+                                  detect_area["w"], detect_area["h"])
+        if img is None:
+            return {"ok": False, "error": "Couldn't grab the detect area — check its size."}
+
+        sig = capture.frame_signature(img)  # Tier 0 — detect box unchanged?
+        with self._lock:
+            last_sig = self._last_frame_sig
+        if capture.signatures_match(sig, last_sig):
+            return {"ok": True, "unchanged": True}
+        with self._lock:
+            self._last_frame_sig = sig
+
+        frame = capture.to_data_url(img)
+        try:
+            result = engine.recognize(img)
+        except Exception as exc:
+            return {"ok": True, "frame": frame, "ja": "", "en": "", "error": f"OCR failed: {exc}"}
+
+        ja = result.text
+        with self._lock:  # Tier 2 — text unchanged?
+            if ja == self._last_ocr_text:
+                return {"ok": True, "unchanged": True, "frame": frame}
+        if not ja.strip():
+            self._hide_overlay()
+            with self._lock:
+                self._last_ocr_text = ja
+            return {"ok": True, "frame": frame, "ja": "", "en": ""}
+        if translator is None:
+            return {"ok": True, "frame": frame, "ja": ja, "en": "", "note": "translator loading"}
+
+        regions = [r for r in ocr.group_lines(result.regions) if r.text.strip()]
+        if not regions:
+            self._hide_overlay()
+            with self._lock:
+                self._last_ocr_text = ja
+            return {"ok": True, "frame": frame, "ja": ja, "en": ""}
+        combined = "\n".join(r.text for r in regions)
+        try:
+            en = translator.translate(combined)
+        except Exception as exc:
+            return {"ok": True, "frame": frame, "ja": ja, "en": "", "error": f"translate failed: {exc}"}
         with self._lock:
             if not self._capturing:
                 return {"ok": True, "frame": frame, "ja": ja, "en": en, "stopped": True}
-            self._last_hwnd, self._last_pairs = int(hwnd), pairs
+            self._last_hwnd, self._last_pairs = None, None  # area mode: no window
+            self._last_area_draw = (combined, en, translate_area)
+            self._last_ocr_text = ja
             if self._overlay_enabled:
-                self._draw_overlay(int(hwnd), pairs, style, text_mode)
+                self._draw_area_overlay(combined, en, translate_area, style, text_mode)
             else:
                 self._hide_overlay_locked()
         return {"ok": True, "frame": frame, "ja": ja, "en": en}
@@ -526,6 +824,7 @@ class Api:
         preventing the overlay's async show/hide from interleaving.
         """
         self._last_pairs = None
+        self._last_area_draw = None
         if self._overlay is not None:
             self._overlay.hide()
 
@@ -544,13 +843,15 @@ class Api:
         with self._lock:
             # Draw under the lock (like process_frame / stop) so a concurrent Stop
             # can't be undone. No-op once capture stopped or nothing is on screen.
-            if not (self._capturing and self._overlay_enabled
-                    and self._last_hwnd and self._last_pairs):
+            if not (self._capturing and self._overlay_enabled):
                 return
-            hwnd, pairs = self._last_hwnd, self._last_pairs
             style = {k: self._settings[k] for k in config.STYLE_KEYS}
             text_mode = self._settings["text_mode"]
-            self._draw_overlay(hwnd, pairs, style, text_mode)
+            if self._last_pairs and self._last_hwnd:  # screen mode — in-place boxes
+                self._draw_overlay(self._last_hwnd, self._last_pairs, style, text_mode)
+            elif self._last_area_draw:  # area mode — one box in the translate area
+                ja, en, area = self._last_area_draw
+                self._draw_area_overlay(ja, en, area, style, text_mode)
 
     @staticmethod
     def _overlay_text(ja: str, en: str, text_mode: str) -> str:
@@ -587,6 +888,14 @@ class Api:
                     "text": self._overlay_text(region.text, en, text_mode),
                     "x": left + x0 + offx,
                     "y": top + y0 + offy,
+                    # Keep the user's font size: the overlay wraps the translation
+                    # and grows its box right/down to fit (see render_text_image).
+                    # "box" is the minimum (covers the original text); "max_w" is
+                    # how far it may stretch right — the room from this box's left
+                    # to the window's right edge — so a long line wraps before it
+                    # runs past the window instead of shrinking the text.
+                    "box": (x1 - x0, y1 - y0),
+                    "max_w": max(int(win_w - (x0 + offx) - 8), x1 - x0),
                 })
 
         # No boxes at all: one subtitle-style band lower-center of the window.
@@ -605,11 +914,35 @@ class Api:
 
         self._ensure_overlay().update(items, style)
 
+    def _draw_area_overlay(self, ja: str, en: str, area: dict,
+                           style: dict, text_mode: str) -> None:
+        """Draw the combined translation into the user's fixed translate box.
+
+        Area mode: one box at the `translate_area` rectangle (absolute screen px),
+        wrapping the translation to that box's width. Caller MUST hold self._lock.
+        """
+        offx, offy = int(style.get("offset_x", 0)), -int(style.get("offset_y", 0))
+        text = self._overlay_text(ja, en, text_mode)
+        if not text.strip():
+            self._hide_overlay_locked()
+            return
+        tx, ty, tw, th = int(area["x"]), int(area["y"]), int(area["w"]), int(area["h"])
+        items = [{
+            "text": text,
+            "x": tx + offx,
+            "y": ty + offy,
+            # The translate box IS the width limit here (the user sized it), so wrap
+            # to it and grow down within — never stretch past the box to the right.
+            "box": (tw, th),
+            "max_w": tw,
+        }]
+        self._ensure_overlay().update(items, style)
+
 
 def main() -> None:
     api = Api()
     window = webview.create_window(
-        title="NihongoViewer",
+        title="Yomitori",
         url=str(INDEX_HTML),
         js_api=api,
         width=1024,
@@ -618,7 +951,12 @@ def main() -> None:
     )
     # Hand the window to the API so the card-capture hotkey can poke the UI.
     api._window = window
-    webview.start()
+    # Build/open the Read Mode dictionary index up front on a background thread, so
+    # the first word hover is instant instead of waiting on the one-time build.
+    threading.Thread(target=dictionary.ensure, daemon=True).start()
+    # Window / taskbar icon (best-effort — an older backend may ignore it).
+    start_kwargs = {"icon": str(APP_ICON)} if APP_ICON.exists() else {}
+    webview.start(**start_kwargs)
     api._hotkey.close()       # unregister the global hotkeys on exit
     api._card_hotkey.close()
 

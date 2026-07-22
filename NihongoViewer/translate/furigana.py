@@ -29,6 +29,14 @@ from . import names  # shares the fugashi.Tagger singleton via names.get_tagger(
 _KANJI = r"[一-鿿々〆〇ヶ]"
 _HAS_KANJI = re.compile(_KANJI)
 
+# Any Japanese script (hiragana / katakana / kanji / halfwidth katakana) — a token
+# with none is punctuation/Latin/space and isn't worth a dictionary lookup.
+_HAS_JAPANESE = re.compile(r"[぀-ヿ㐀-鿿ｦ-ﾟ々〆〇]")
+
+# UniDic pos1 values that are never dictionary words (punctuation / symbols /
+# whitespace) — skipped as hover-lookup targets in tokens().
+_SKIP_POS1 = {"補助記号", "記号", "空白", "URL", "顔文字"}
+
 
 def _to_hira(kana: str) -> str:
     """Katakana -> hiragana (best-effort; passes through if jaconv is absent)."""
@@ -132,6 +140,64 @@ def annotate(text: str) -> list[dict]:
         else:
             merged.append(seg)
     return merged or [{"base": text}]
+
+
+def tokens(text: str) -> list[dict]:
+    """Split `text` into per-word tokens for the interactive Read Mode preview.
+
+    Unlike `annotate` (which merges plain runs for a tidy ruby line), this keeps
+    every morpheme separate so the UI can make each word its own hover target.
+    Each token is::
+
+        {"segments": [...],   # ruby/plain pieces, as annotate() produces
+         "surface":  str,     # the word as written
+         "query":    str,     # dictionary (lemma) form to look up
+         "reading":  str,     # hiragana reading of the surface (or "")
+         "pos":      str,     # UniDic pos1 (名詞/動詞/助詞/…) for ranking
+         "lookup":   bool}    # whether it's a content word worth looking up
+
+    If the analyzer is unavailable the whole string comes back as one non-lookup
+    token, so the preview still renders (just without per-word hovering).
+    """
+    text = text or ""
+    if not text.strip():
+        return []
+
+    tagger = names.get_tagger()
+    if tagger is None:
+        return [{"segments": [{"base": text}], "surface": text,
+                 "query": text, "reading": "", "pos": "", "lookup": False}]
+    try:
+        raw = list(tagger(text))
+    except Exception:
+        return [{"segments": [{"base": text}], "surface": text,
+                 "query": text, "reading": "", "pos": "", "lookup": False}]
+
+    out: list[dict] = []
+    for tok in raw:
+        surface = tok.surface
+        if not surface:
+            continue
+        reading = _token_reading(tok)
+        feat = getattr(tok, "feature", None)
+        pos1 = getattr(feat, "pos1", None) or ""
+        lemma = getattr(feat, "lemma", None) or surface
+        # Ruby only over kanji runs (same rule as annotate); pure kana/Latin stays flat.
+        if _HAS_KANJI.search(surface) and reading:
+            segments = _fit(surface, reading)
+        else:
+            segments = [{"base": surface}]
+        lookup = bool(_HAS_JAPANESE.search(surface)) and pos1 not in _SKIP_POS1
+        out.append({
+            "segments": segments,
+            "surface": surface,
+            "query": lemma if _HAS_JAPANESE.search(lemma) else surface,
+            "reading": reading or "",
+            "pos": pos1,
+            "lookup": lookup,
+        })
+    return out or [{"segments": [{"base": text}], "surface": text,
+                    "query": text, "reading": "", "pos": "", "lookup": False}]
 
 
 def reading_text(text: str) -> str:

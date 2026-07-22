@@ -1,14 +1,46 @@
 // ---- Settings panel: UI-only interactions -----------------------------------
 
-// Generic visual-only toggle groups. The Text mode group (persists + drives the
-// overlay) is handled separately.
-document.querySelectorAll(".toggle-group:not(#text-mode)").forEach((group) => {
+// Generic visual-only toggle groups. The Text mode and Capture mode groups
+// (which persist + drive behavior) are handled separately.
+document.querySelectorAll(".toggle-group:not(#text-mode):not(#capture-mode)").forEach((group) => {
   group.querySelectorAll(".toggle").forEach((btn) => {
     btn.addEventListener("click", () => {
       group.querySelectorAll(".toggle").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
     });
   });
+});
+
+// ---- Capture mode (Screen / Area) -------------------------------------------
+const captureModeGroup = document.getElementById("capture-mode");
+const configureAreaBtn = document.getElementById("configure-area-btn");
+
+function activeCaptureMode() {
+  const b = captureModeGroup.querySelector(".toggle.active");
+  return b ? b.dataset.capmode : "screen";
+}
+function setCaptureModeButtons(mode) {
+  captureModeGroup.querySelectorAll(".toggle").forEach((b) =>
+    b.classList.toggle("active", b.dataset.capmode === mode));
+  // Area mode grabs the screen directly (no window), so swap the window picker +
+  // refresh for the Configure Area button. Screen mode keeps them.
+  const area = mode === "area";
+  configureAreaBtn.hidden = !area;
+  document.getElementById("window-select").hidden = area;
+  document.getElementById("refresh-btn").hidden = area;
+}
+captureModeGroup.querySelectorAll(".toggle").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    setCaptureModeButtons(btn.dataset.capmode);
+    saveSettings();
+  });
+});
+configureAreaBtn.addEventListener("click", async () => {
+  if (!hasApi()) return;
+  // Opens the fullscreen editor; drag the green (detect) and blue (translate)
+  // boxes anywhere on screen, then Save.
+  const res = await window.pywebview.api.configure_area();
+  if (res && res.error) alert(res.error);
 });
 
 const sizeSlider = document.getElementById("size-slider");
@@ -53,6 +85,39 @@ function notifyCaptureChanged() {
   document.dispatchEvent(new CustomEvent("nv:capture-changed"));
 }
 
+// ---- Overlay show/hide toggle (SETTING panel status) ------------------------
+const overlayToggle = document.getElementById("overlay-toggle");
+const overlayToggleLabel = document.getElementById("overlay-toggle-label");
+let overlayVisible = false; // reflects the running overlay, not a saved setting
+
+// Render the toggle. Disabled (and "Overlay off") whenever we're not capturing,
+// since there's no overlay to control; otherwise "Shown"/"Hidden" with a colored
+// dot. Kept purely presentational so both the click and the hotkey use it.
+function renderOverlayToggle() {
+  overlayToggle.disabled = !capturing;
+  overlayToggle.classList.toggle("on", capturing && overlayVisible);
+  overlayToggle.classList.toggle("off", capturing && !overlayVisible);
+  overlayToggleLabel.textContent = !capturing
+    ? "Overlay off"
+    : overlayVisible ? "Overlay shown" : "Overlay hidden";
+}
+
+// Called from Python (Api._notify_overlay_state) when the global hide/show hotkey
+// flips the overlay, so the toggle stays in sync with the hotkey.
+function setOverlayVisibleState(visible) {
+  overlayVisible = !!visible;
+  renderOverlayToggle();
+}
+
+overlayToggle.addEventListener("click", async () => {
+  if (!capturing || !hasApi()) return;
+  const res = await window.pywebview.api.set_overlay_visible(!overlayVisible);
+  if (res && typeof res.visible === "boolean") overlayVisible = res.visible;
+  renderOverlayToggle();
+});
+
+window.NihongoViewer.onOverlayToggled = setOverlayVisibleState;
+
 async function loadWindows() {
   if (!hasApi()) return;
   windowSelect.innerHTML = '<option value="">Loading windows…</option>';
@@ -87,13 +152,17 @@ function setPreview(dataUrl) {
 
 async function startCapture() {
   const hwnd = Number(windowSelect.value);
-  if (!hwnd) {
+  const areaMode = activeCaptureMode() === "area";
+  if (!hwnd && !areaMode) {
     alert("Please select a window first.");
     return;
   }
-  await window.pywebview.api.start_capture(hwnd);
+  const res = await window.pywebview.api.start_capture(hwnd || 0);
   saveSettings(); // ensure the overlay uses the latest settings
   capturing = true;
+  // Start always re-shows the overlay (see Api.start_capture); reflect that.
+  overlayVisible = !res || res.overlay_visible !== false;
+  renderOverlayToggle();
   notifyCaptureChanged();
   startBtn.textContent = "Stop";
   startBtn.classList.remove("start");
@@ -107,6 +176,8 @@ async function startCapture() {
 
 function stopCapture() {
   capturing = false;
+  overlayVisible = false;
+  renderOverlayToggle();
   notifyCaptureChanged();
   stopOcrLoop();
   if (hasApi()) window.pywebview.api.stop_capture(); // hide the overlay
@@ -118,7 +189,7 @@ function stopCapture() {
 
 startBtn.addEventListener("click", () => {
   if (!hasApi()) {
-    alert("Run this through NihongoViewer (python main.py) to use capture.");
+    alert("Run this through Yomitori (python main.py) to use capture.");
     return;
   }
   capturing ? stopCapture() : startCapture();
@@ -225,6 +296,7 @@ function currentSettings() {
     offset_x: Number(document.getElementById("offset-x").value) || 0,
     offset_y: Number(document.getElementById("offset-y").value) || 0,
     text_mode: activeTextMode(),
+    capture_mode: activeCaptureMode(),
     // Only the committed combos; a freshly-captured one stays in its field until
     // Saved. Resent unchanged on style saves — the backend only rebinds on change.
     hotkey: savedHotkey,
@@ -380,6 +452,7 @@ function applySettings(s) {
   hideShowHotkeyField.applySaved(s.hotkey);
   if (s.card_hotkey) cardHotkeyField.applySaved(s.card_hotkey);
   setTextModeButtons(s.text_mode);
+  setCaptureModeButtons(s.capture_mode || "screen");
   currentEngine = s.ocr_engine || currentEngine;
   currentSpeed = s.ocr_speed || currentSpeed;
   setSpeedButtons(currentSpeed); // reflect the saved OCR speed in the dialog
@@ -474,11 +547,19 @@ speedOptions.querySelectorAll(".speed-opt").forEach((btn) => {
 async function ocrTick() {
   if (ocrBusy || !engineReady || !capturing) return;
   const hwnd = Number(windowSelect.value);
-  if (!hwnd) return;
+  const areaMode = activeCaptureMode() === "area";
+  if (!hwnd && !areaMode) return; // screen mode needs a window; area mode doesn't
   ocrBusy = true;
   try {
-    const res = await window.pywebview.api.process_frame(hwnd);
+    const res = await window.pywebview.api.process_frame(hwnd || 0);
     if (!capturing) return; // stopped while we were awaiting
+    if (res && res.unchanged) {
+      // Screen (or its text) didn't change — the backend skipped OCR/translation.
+      // Keep the current detected/translated text and overlay; just refresh the
+      // preview if a fresh frame came back (a cutscene behind steady text).
+      if (res.frame) setPreview(res.frame);
+      return;
+    }
     if (res && res.closed) {
       // Target window was closed — stop capturing and drop the overlay.
       stopCapture();

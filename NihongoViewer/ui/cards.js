@@ -349,6 +349,43 @@
   let stackIndex = -1; // currently-shown capture (index into captureStack)
   let stackLoadedIndex = -1; // which capture is reflected in the form right now
 
+  // Persist the stack (debounced) so a batch of captures survives a restart.
+  // Debounced because a mutation carries the full (image-bearing) stack over the
+  // bridge, and rapid hotkey presses shouldn't each trigger a write.
+  let persistTimer = null;
+  function persistStack() {
+    if (!api()) return;
+    clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      try {
+        api().save_capture_stack(captureStack);
+      } catch (e) {
+        /* best-effort — a failed persist must not disrupt capturing */
+      }
+    }, 400);
+  }
+
+  // Restore the persisted stack on launch (so closing the app mid-review doesn't
+  // lose captures). Shows the newest, and loads it into the form if the user is
+  // already on the Create-card page.
+  async function loadStack() {
+    if (!api()) return;
+    let saved = [];
+    try {
+      saved = await api().load_capture_stack();
+    } catch (e) {
+      saved = [];
+    }
+    if (!Array.isArray(saved) || !saved.length) return;
+    captureStack = saved.slice(-CAPTURE_STACK_MAX).map((e) => ({
+      frame: e.frame || "", ja: e.ja || "", en: e.en || "",
+    }));
+    stackIndex = captureStack.length - 1;
+    stackLoadedIndex = -1;
+    renderStack();
+    if (createPageActive()) loadStackIntoForm();
+  }
+
   function createPageActive() {
     return document.getElementById("page-create").classList.contains("active");
   }
@@ -398,6 +435,7 @@
     captureStack.push({ frame, ja: last.ja || "", en: last.en || "" });
     if (captureStack.length > CAPTURE_STACK_MAX) captureStack.shift(); // drop oldest
     stackIndex = captureStack.length - 1; // jump to the newest
+    persistStack();
     renderStack();
     // If the user is on the Create-card page, show it right away; otherwise it
     // loads when they navigate there (see the nv:page-changed handler below).
@@ -415,6 +453,7 @@
   function deleteStackItem() {
     if (stackIndex < 0) return;
     captureStack.splice(stackIndex, 1);
+    persistStack();
     if (!captureStack.length) {
       stackIndex = stackLoadedIndex = -1;
       renderStack();
@@ -428,6 +467,7 @@
   function clearStack() {
     captureStack = [];
     stackIndex = stackLoadedIndex = -1;
+    persistStack();
     renderStack();
   }
 
@@ -454,13 +494,16 @@
   // padded sentence MADLAD returns for a bare word ("学生" -> "Students are
   // students."). The Sentence field uses the plain sentence translator.
   async function translateField(srcEl, dstEl, btn, opts = {}) {
+    // Status messages go to the caller's hint area (Create-card by default, or the
+    // detail-view hint when the My-card edit buttons pass opts.hint).
+    const hint = opts.hint || flashHint;
     const text = srcEl.value.trim();
     if (!text) {
-      flashHint("Nothing to translate — fill in the Japanese first.", "err");
+      hint("Nothing to translate — fill in the Japanese first.", "err");
       return;
     }
     if (!api()) {
-      flashHint("Translation needs the app running (MADLAD-400).", "err");
+      hint("Translation needs the app running (MADLAD-400).", "err");
       return;
     }
     const labelEl = btn.querySelector(".mini-label");
@@ -478,7 +521,7 @@
     btn.disabled = false;
     labelEl.textContent = label;
     if (!res || !res.ok) {
-      flashHint((res && res.error) || "Translation failed.", "err");
+      hint((res && res.error) || "Translation failed.", "err");
       return;
     }
     dstEl.value = res.text || "";
@@ -496,6 +539,24 @@
       sentenceEl,
       sentenceTrEl,
       e.currentTarget
+    ));
+
+  // My-card edit mode: same Translate buttons, but re-translating the detail
+  // fields and reporting status through the detail hint (see setEditing, which
+  // shows these buttons only while editing).
+  document.getElementById("detail-translate-word-btn").addEventListener("click", (e) =>
+    translateField(
+      document.getElementById("detail-word"),
+      document.getElementById("detail-word-tr"),
+      e.currentTarget,
+      { word: true, hint: detailHint }
+    ));
+  document.getElementById("detail-translate-sentence-btn").addEventListener("click", (e) =>
+    translateField(
+      document.getElementById("detail-sentence"),
+      document.getElementById("detail-sentence-tr"),
+      e.currentTarget,
+      { hint: detailHint }
     ));
 
   // --- Clear / collect the form ---
@@ -571,12 +632,16 @@
   const saveEditBtn = document.getElementById("card-save-edit-btn");
   const uploadBtn = document.getElementById("detail-upload-btn");
   const uploadNote = document.getElementById("upload-note");
+  const detailTranslateWordBtn = document.getElementById("detail-translate-word-btn");
+  const detailTranslateSentenceBtn = document.getElementById("detail-translate-sentence-btn");
   const uploadInput = document.getElementById("detail-upload-input");
   const detailHintEl = document.getElementById("detail-hint");
   const cardSearch = document.getElementById("card-search");
   const cardSortSel = document.getElementById("card-sort");
   const deckCountInline = document.getElementById("deck-count-inline");
   const cardPos = document.getElementById("card-pos");
+  const detailPager = document.getElementById("detail-pager"); // prev/next above the image
+  const detailDeckLabel = document.getElementById("detail-deck-label"); // deck name in the pager
   const cardMeta = document.getElementById("card-meta");
   const metaDeck = document.getElementById("meta-deck");
   const metaDate = document.getElementById("meta-date");
@@ -663,7 +728,6 @@
   async function openDeck(name) {
     currentDeck = name;
     document.getElementById("deck-crumb").textContent = name;
-    document.getElementById("card-crumb-deck").textContent = name;
     cardFilter = "";
     cardSearch.value = "";
     await loadCards(name);
@@ -706,7 +770,7 @@
   function fillDetail(card) {
     currentFullCard = card;
     setEditing(false); // always open a card in read mode
-    document.getElementById("card-crumb").textContent = card.word || "(card)";
+    detailDeckLabel.textContent = currentDeck || ""; // deck name is the pager label
     document.getElementById("detail-word").value = card.word || "";
     document.getElementById("detail-word-tr").value = card.word_tr || "";
     document.getElementById("detail-sentence").value = card.sentence || "";
@@ -734,15 +798,15 @@
     });
     // Read mode shows Prev/Next/Edit; edit mode shows Cancel/Save + upload.
     backBtn.hidden = on;
-    prevBtn.hidden = on;
-    nextBtn.hidden = on;
-    cardPos.hidden = on;
+    detailPager.hidden = on; // hide the whole prev/next pager (above the image)
     editBtn.hidden = on;
     deleteCardBtn.hidden = on;
     cancelBtn.hidden = !on;
     saveEditBtn.hidden = !on;
     uploadBtn.hidden = !on;
     uploadNote.hidden = !on;
+    detailTranslateWordBtn.hidden = !on; // Translate buttons only while editing
+    detailTranslateSentenceBtn.hidden = !on;
     cardMeta.hidden = on; // read-only info; hide while editing
     detailMediaBox.classList.toggle("editing", on);
     if (!on) detailMediaBox.classList.remove("drop-active");
@@ -1138,5 +1202,8 @@
   // Render the fallback immediately (so a plain browser isn't empty), then
   // refresh from the backend once the pywebview API is ready.
   loadDecks();
-  window.addEventListener("pywebviewready", loadDecks);
+  window.addEventListener("pywebviewready", () => {
+    loadDecks();
+    loadStack(); // restore any captures from a previous session
+  });
 })();
