@@ -1,7 +1,7 @@
 """Turn per-line OCR regions into sentence-chunks for translation + placement.
 
-MeikiOCR returns one region per *physical line*. Two things go wrong if we treat
-each line as a translation unit:
+The OCR engine returns one region per *physical line*. Two things go wrong if we
+treat each line as a translation unit:
 
   * a sentence that wraps across lines ("本当にただの" / "学生?") gets translated in
     fragments — mangled or half-dropped;

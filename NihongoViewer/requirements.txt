@@ -1,4 +1,4 @@
-# Core dependencies (MeikiOCR path — no torch required).
+# Core dependencies (torch-free throughout).
 pywebview>=5.0
 pywin32>=306
 Pillow>=10.0
@@ -9,17 +9,29 @@ platformdirs>=4.0
 
 # Screen capture — Windows Graphics Capture (per-window, no game disturbance).
 # NOTE: install this one WITHOUT its deps so it doesn't pull in `opencv-python`
-# (we already use `opencv-python-headless` via meikiocr — two OpenCV builds clash):
+# (we use `opencv-python-headless` below — two OpenCV builds clash):
 #     pip install --no-deps windows-capture
 windows-capture>=2.0
 
-# OCR — MeikiOCR (ONNX Runtime, horizontal/retro-game fonts).
-meikiocr>=0.3.4
+# OCR — PaddleOCR via RapidOCR (ONNX Runtime; PP-OCRv5 det + rec). Apache-2.0 and
+# torch/paddle-free — both the code and the bundled recognition weights
+# (ocr/models/japan_ppocrv5_rec.onnx) are commercial-clean. Install rapidocr WITHOUT
+# its deps so it reuses opencv-python-headless instead of pulling opencv-python:
+#     pip install --no-deps rapidocr-onnxruntime
+rapidocr-onnxruntime>=1.2.3
+onnxruntime>=1.17          # ONNX inference (was implicit via meikiocr before)
+opencv-python-headless>=4.5 # cv2 for rapidocr's image ops (headless: no GUI libs)
+pyclipper>=1.3             # rapidocr DB detection post-processing
+shapely>=2.0              # rapidocr DB detection post-processing
+PyYAML>=6.0               # rapidocr config
+six>=1.16                # rapidocr
 
 # Translation — MADLAD-400-3B (Apache-2.0, commercial-safe) JA->EN, run via
-# CTranslate2 + SentencePiece. Uses a ready-made int8 CTranslate2 export, so there
-# is NO torch conversion step — weights (~1.65 GB) download on first run into the
-# HF cache and inference is torch-free.
+# CTranslate2 + SentencePiece. Uses a ready-made int8 CTranslate2 export (no torch
+# conversion). The model is BUNDLED and loaded from a local dir (models/madlad/, or
+# $NIHONGOVIEWER_MADLAD_DIR) — no huggingface_hub, no runtime download. Inference is
+# torch-free. Populate models/madlad/ with the CT2 files (model.bin, config.json,
+# shared_vocabulary.json, spiece.model) at build time.
 ctranslate2>=4.0
 sentencepiece>=0.2.0
 

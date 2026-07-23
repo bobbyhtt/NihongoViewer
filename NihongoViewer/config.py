@@ -20,7 +20,7 @@ APP_NAME = "NihongoViewer"
 
 #: Every persisted setting and its default. Keep this in sync with the UI.
 DEFAULTS: dict = {
-    "ocr_engine": "MeikiOCR",       # active OCR engine (see ocr.available_engines())
+    "ocr_engine": "RapidOCR",       # active OCR engine (see ocr.available_engines())
     "ocr_speed": "balanced",        # OCR speed/quality: "fast" | "balanced" | "accurate"
     "hotkey": "Alt+V",              # global hide/show overlay hotkey
     "card_hotkey": "Alt+C",         # global "capture into Create-card stack" hotkey

@@ -9,12 +9,15 @@ from .base import DEFAULT_SPEED, SPEED_PRESETS, OcrEngine, OcrRegion, OcrResult
 from .group import group_lines
 
 # name -> "module:ClassName". Kept as strings so `import ocr` stays cheap.
+# RapidOCR (RapidOCR runtime + PP-OCRv5 ONNX models) is the only shipped engine —
+# Apache-2.0 and torch/paddle-free, so both code and weights are commercial-clean.
+# The ABC keeps the stage swappable; MeikiOCR was removed (its weights were LGPL-3.0).
 _ENGINES = {
-    "MeikiOCR": ("meiki", "MeikiEngine"),
+    "RapidOCR": ("paddle", "PaddleEngine"),
 }
 
 #: Engine selected when the app first starts.
-DEFAULT_ENGINE = "MeikiOCR"
+DEFAULT_ENGINE = "RapidOCR"
 
 
 def available_engines() -> list[str]:

@@ -3,9 +3,10 @@
 MADLAD-400 (`google/madlad400-3b-mt`, **Apache-2.0** — the cleanest commercial
 license of the options we tried) is a 3B T5 multilingual MT model and clearly the
 most fluent JA->EN of the models we evaluated. We run the community int8 CTranslate2
-export `Nextcloud-AI/madlad400-3b-mt-ct2-int8` (~1.65 GB) — the runtime stays the
-light `ctranslate2` + `sentencepiece` stack, no torch ever, and no conversion step.
-Weights download on first run into the standard Hugging Face cache.
+export `Nextcloud-AI/madlad400-3b-mt-ct2-int8` — the runtime stays the light
+`ctranslate2` + `sentencepiece` stack, no torch ever, and no conversion step. The
+model is **bundled with the app and loaded from a local directory** (`models/madlad/`,
+or `$NIHONGOVIEWER_MADLAD_DIR`) — no network and no `huggingface_hub` at runtime.
 
 It's a T5 with a single *shared* SentencePiece vocab (`spiece.model`) used for both
 encoding and decoding, and each source sentence is prefixed with a `<2en>`
@@ -22,16 +23,38 @@ near-identical lines are free.
 
 import os
 import re
+from pathlib import Path
 
 from .base import Translator, _tidy_gloss
 from .names import protect as protect_names
 from .segment import has_japanese, segment
 
-# int8 CTranslate2 export of google/madlad400-3b-mt (Apache-2.0). Ready to use —
-# no torch conversion. Override with a different CT2 repo via the env var below.
-_REPO = os.environ.get(
-    "NIHONGOVIEWER_MADLAD_CT2_REPO", "Nextcloud-AI/madlad400-3b-mt-ct2-int8"
-)
+# The int8 CTranslate2 export of google/madlad400-3b-mt (Apache-2.0) is loaded
+# from a LOCAL directory bundled with the app (the Steam depot ships it) — no
+# network and no huggingface_hub at runtime. The directory holds the CTranslate2
+# files (model.bin + config.json + shared_vocabulary.json) plus the shared
+# SentencePiece vocab (spiece.model). Point at a different copy with the env var;
+# otherwise the bundled models/madlad/ next to the app is used.
+_MODEL_DIR_ENV = "NIHONGOVIEWER_MADLAD_DIR"
+_DEFAULT_MODEL_DIR = Path(__file__).resolve().parent.parent / "models" / "madlad"
+
+
+def _resolve_model_dir() -> str:
+    """Locate the bundled MADLAD model directory, or fail with a clear message."""
+    candidates = []
+    override = os.environ.get(_MODEL_DIR_ENV)
+    if override:
+        candidates.append(Path(override))
+    candidates.append(_DEFAULT_MODEL_DIR)
+    for d in candidates:
+        if (d / "model.bin").is_file():
+            return str(d)
+    raise FileNotFoundError(
+        "MADLAD model not found. Expected a CTranslate2 model directory "
+        "(model.bin, config.json, shared_vocabulary.json, spiece.model) at "
+        f"{_DEFAULT_MODEL_DIR}, or set ${_MODEL_DIR_ENV} to its location. "
+        "The model ships bundled with the app; see the build instructions."
+    )
 
 # Target-language prefix token MADLAD prepends to the source ("<2en>" => English).
 # It's a genuine piece in the shared vocab, so it survives SentencePiece encoding.
@@ -90,7 +113,7 @@ _LONE_KANA = re.compile(r"[぀-ゟ゠-ヿｦ-ﾟ]")
 def _is_noise_fragment(text: str) -> bool:
     """True for a single lone kana char — a line-wrap orphan, not a translatable unit.
 
-    MeikiOCR's line-grouping can leave a wrapped sentence's tail (``た``, ``せ``) as
+    The OCR line-grouping can leave a wrapped sentence's tail (``た``, ``せ``) as
     its own one-character segment. The model can only hallucinate off it ("た" ->
     "1980s 2000s"), so we drop it. A single *kanji* can be a real label (``水`` =
     water), so only lone kana are treated as noise.
@@ -181,9 +204,8 @@ class MadladTranslator(Translator):
             return
         import ctranslate2
         import sentencepiece as spm
-        from huggingface_hub import snapshot_download
 
-        model_dir = snapshot_download(_REPO)
+        model_dir = _resolve_model_dir()
         self._sp = spm.SentencePieceProcessor(
             os.path.join(model_dir, "spiece.model")
         )

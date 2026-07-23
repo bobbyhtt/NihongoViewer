@@ -25,18 +25,12 @@ import ocr
 import translate
 from translate import dictionary, furigana
 
-# --- Bundled models (Steam / offline build) ----------------------------------
-# When a `models/` folder ships next to the app (as in the Steam depot), use it
-# as the HuggingFace cache and run fully offline, so no weights are ever fetched
-# at runtime. A dev checkout has no such folder, so the normal first-run HF
-# download still works there. Must run before huggingface_hub is imported (it is
-# imported lazily inside the engines, so setting it here at import time is early
-# enough).
-_MODELS_DIR = Path(__file__).parent / "models"
-if _MODELS_DIR.is_dir():
-    os.environ.setdefault("HF_HOME", str(_MODELS_DIR))
-    os.environ.setdefault("HF_HUB_OFFLINE", "1")
-    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+# Both ML models are loaded from local directories bundled with the app — the
+# MADLAD translation model from `models/madlad/` (see translate.madlad) and the
+# OCR weights from `ocr/models/` — so nothing is fetched from Hugging Face at
+# runtime (no huggingface_hub dependency). The only optional runtime download is
+# the JMdict Read-Mode dictionary (~11 MB via stdlib urllib), and it's bundleable
+# too (`dict/jmdict.sqlite`).
 
 UI_DIR = Path(__file__).parent / "ui"
 INDEX_HTML = UI_DIR / "index.html"
@@ -191,6 +185,11 @@ class Api:
     # -- OCR stage ------------------------------------------------------------
     def set_ocr_engine(self, name: str) -> dict:
         """Select an OCR engine and load its weights (stage restart, not app)."""
+        # A saved config can name an engine that no longer exists (e.g. the removed
+        # MeikiOCR). Fall back to the default so the stage self-heals instead of
+        # showing "unavailable"; the corrected name is persisted + returned below.
+        if name not in ocr.available_engines():
+            name = ocr.DEFAULT_ENGINE
         with self._lock:
             speed = self._settings["ocr_speed"]
         try:
@@ -710,7 +709,7 @@ class Api:
             return {"ok": True, "frame": frame, "ja": ja, "en": "", "note": "translator loading"}
 
         # Group wrapped line-regions into text blocks first, then translate each
-        # block as a whole. MeikiOCR emits one region per physical line, so a
+        # block as a whole. The OCR engine emits one region per physical line, so a
         # sentence that wraps ("本当にただの" / "学生?") would otherwise be
         # translated in fragments — mangled or half-dropped. Grouping keeps a
         # genuinely separate element (a name, a far menu button) its own block, so
@@ -942,7 +941,7 @@ class Api:
 def main() -> None:
     api = Api()
     window = webview.create_window(
-        title="Yomitori",
+        title="Yakutori",
         url=str(INDEX_HTML),
         js_api=api,
         width=1024,

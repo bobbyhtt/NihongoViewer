@@ -11,7 +11,10 @@ captured frame, translates any detected Japanese text to English, and draws the
 translation on a floating overlay on top of (or below) the source window.
 
 **Everything runs locally** — no cloud APIs, no network calls at runtime, no telemetry.
-The only network access is a one-time model-weights download on first run.
+The ML models (OCR + MADLAD translation) are **bundled and loaded from local
+directories** — no Hugging Face at runtime. The only optional network access is a
+one-time JMdict Read-Mode dictionary download (~11 MB, stdlib `urllib`), which is
+also bundleable (`dict/jmdict.sqlite`).
 
 ## Pipeline (must stay a clean 4-stage pipeline)
 
@@ -22,10 +25,11 @@ Screen Capture -> OCR -> Translation -> Display
 1. **Screen Capture** — grabs the target window's pixels at the configured refresh
    rate (e.g. 1–10 fps). This is a polling loop, **not** a video pipeline.
 2. **OCR** — extracts Japanese text from the captured frame. Engines sit behind a
-   common ABC so the stage stays swappable, but **MeikiOCR is the only shipped
-   engine** — horizontal text, trained on pixel/retro-game fonts. (A torch-based
-   vertical-text engine, MangaOCR, was removed: it pulled in PyTorch, which is not
-   viable for the commercial Steam build — see [Open decisions](#open-decisions).)
+   common ABC so the stage stays swappable, but **RapidOCR is the only shipped
+   engine** — horizontal text via the RapidOCR runtime + PP-OCRv5 ONNX models, all Apache-2.0
+   and torch/paddle-free. (Two engines were removed: MangaOCR, a torch-based
+   vertical-text engine; and MeikiOCR, whose model *weights* were LGPL-3.0 — both
+   non-starters for the commercial Steam build. See [Open decisions](#open-decisions).)
 3. **Translation** — MADLAD-400-3B (`google/madlad400-3b-mt`, Apache-2.0 —
    commercial-safe) translates JA → EN locally via CTranslate2. Identical/near-identical
    source text should hit a cache instead of re-translating (**fuzzy** match, not just
@@ -57,7 +61,7 @@ stage — **do not** build a plugin system.
 
 | # | Setting | Behavior |
 |---|---------|----------|
-| 1 | OCR engine | MeikiOCR (only shipped engine; ABC keeps the stage swappable). Restart the pipeline **stage** on change, not the whole app. |
+| 1 | OCR engine | RapidOCR (only shipped engine; ABC keeps the stage swappable). Restart the pipeline **stage** on change, not the whole app. |
 | 2 | Hide/Show overlay hotkey | **Global** hotkey — must work when the overlay/app isn't focused. |
 | 3 | Font family / size | Applies to overlay text. |
 | 4 | Text color | Color picker. |
@@ -118,9 +122,13 @@ cleanly.
   platform-native capture only if `mss` proves insufficient for a specific OS (document
   why here if that happens).
 - **OCR**:
-  - MeikiOCR — https://github.com/rtr46/meikiocr — the only shipped engine (ONNX, no
-    torch). **Do not reintroduce any PyTorch-based OCR** (e.g. manga-ocr): torch is a
-    licensing/size non-starter for the commercial Steam build.
+  - PaddleOCR via **RapidOCR** (`rapidocr-onnxruntime`, Apache-2.0) — the only shipped
+    engine. Runs PP-OCR **detection** (bundled in the rapidocr wheel) + **PP-OCRv5**
+    Japanese **recognition** (`ocr/models/japan_ppocrv5_rec.onnx`, bundled; dict baked
+    into the ONNX) on ONNX Runtime — **no PaddlePaddle and no torch at runtime**. Both
+    code and weights are Apache-2.0 (commercial-clean). **Do not reintroduce any
+    PyTorch-based OCR** (e.g. manga-ocr) or any model with copyleft weights (e.g.
+    MeikiOCR's LGPL-3.0 weights): both are non-starters for the commercial Steam build.
 - **Translation**: MADLAD-400-3B (`google/madlad400-3b-mt`, Apache-2.0) via
   `ctranslate2` + `sentencepiece`, using the ready-made int8 CT2 export
   `Nextcloud-AI/madlad400-3b-mt-ct2-int8` (~1.65 GB) — **no torch, ever** (no
@@ -129,12 +137,17 @@ cleanly.
   repetition penalty + no-repeat-ngram. Rejected predecessors (all removed): Sugoi V4
   (license forbids commercial use), OPUS-MT (`Helsinki-NLP/opus-mt-ja-en`, Apache-2.0
   — too weak), FuguMT (`staka/fugumt-ja-en`, CC-BY-SA — better than OPUS-MT but still
-  not good enough, and needed a torch conversion step). Override the CT2 repo via
-  `NIHONGOVIEWER_MADLAD_CT2_REPO=<hf-repo-id>`. Trade-off: 3B is heavier — ~0.5-2 s per
-  *new* line on CPU and ~2 GB RAM, largely hidden by the fuzzy cache.
+  not good enough, and needed a torch conversion step). The model is **bundled and
+  loaded from a local directory** (`models/madlad/`, override with
+  `NIHONGOVIEWER_MADLAD_DIR=<path>`) — **no `huggingface_hub` at runtime**. Trade-off:
+  3B is heavier — ~0.5-2 s per *new* line on CPU and ~2 GB RAM, largely hidden by the
+  fuzzy cache.
 
-Model weights download on first run and cache under `~/.cache/huggingface/` (standard
-HF cache). **Do not** bundle weights in the repo or installer.
+Both ML models are **bundled** and loaded from local directories (OCR from
+`ocr/models/`, MADLAD from `models/madlad/`) — nothing is fetched from Hugging Face
+at runtime. The large MADLAD model (~3 GB) is **not** committed to git (it's copied
+into the build/depot); the small Apache-2.0 OCR ONNX under `ocr/models/` **is**
+committed. Keep model *loading* path-based, not `huggingface_hub`-based.
 
 ## ⚠️ Current state vs. target
 
@@ -145,7 +158,7 @@ repo does **not** match it yet:
 |--------|-------------------|------------------|
 | UI toolkit | PySide6 (Qt) | **pywebview + HTML/CSS/JS** (`ui/`) |
 | Screen capture | `mss` (cross-platform) | **Windows Graphics Capture** (`windows-capture`) — per-window, no game disturbance; window enum/geometry still Win32 |
-| Pipeline | 4 stages wired | **All 4 wired**: Capture + OCR (MeikiOCR) + MADLAD-400 translation (fuzzy-cached) + in-place overlay |
+| Pipeline | 4 stages wired | **All 4 wired**: Capture + OCR (RapidOCR) + MADLAD-400 translation (fuzzy-cached) + in-place overlay |
 | Layout | 3-panel Qt grid | Single HTML page |
 
 The pywebview shell cannot provide the per-pixel-transparent, click-through overlay the
@@ -167,7 +180,8 @@ NihongoViewer/
   capture.py                  # Win32 window enum/geometry + WGC per-window capture
   ocr/                        # OCR stage — engines behind a common ABC
     base.py                   #   OcrEngine ABC + OcrResult/OcrRegion (text + boxes)
-    meiki.py                  #   MeikiOCR (ONNX, horizontal) — the only engine
+    paddle.py                 #   RapidOCR engine (PP-OCRv5 ONNX, horizontal) — the only engine
+    models/                   #   bundled PP-OCRv5 JA recognition ONNX (Apache-2.0)
     group.py                  #   group line-regions into positioned sentence-chunks
     __init__.py               #   create_engine() factory + registry
   translate/                  # Translation stage — backends behind a common ABC
@@ -185,7 +199,7 @@ NihongoViewer/
   hotkey.py                   # global hide/show hotkey (Win32 RegisterHotKey thread)
   fonts/                      # bundled overlay fonts (OFL, JP+Latin): Noto Sans JP,
                               #   M PLUS Rounded 1c, Shippori Mincho (+ licenses)
-  requirements.txt            # core: pywebview, pywin32, Pillow, numpy, platformdirs, meikiocr, ctranslate2
+  requirements.txt            # core: pywebview, pywin32, Pillow, numpy, platformdirs, rapidocr-onnxruntime, ctranslate2
   run.bat                     # launcher (uses .venv)
   ui/                         # index.html, style.css, app.js, cards.js, furigana.js
 ```
@@ -207,9 +221,10 @@ py -m venv .venv
 
 - Keep the 4 pipeline stages decoupled and each independently swappable behind its ABC.
 - Prefer live-applying setting changes; treat "restart required" as a last resort.
-- **No PyTorch.** The whole toolchain is torch-free (MeikiOCR is ONNX, MADLAD is CT2);
+- **No PyTorch.** The whole toolchain is torch-free (PaddleOCR/RapidOCR is ONNX, MADLAD is CT2);
   keep it that way so the commercial Steam build stays clean of torch's licensing/size.
-- No runtime network calls beyond the first-run model download.
+- No runtime network calls. Both ML models are bundled/local (no `huggingface_hub`);
+  the only optional download is the JMdict dictionary (~11 MB, stdlib `urllib`).
 
 ## Open decisions
 
@@ -227,10 +242,13 @@ the answer here.
    Japanese-learning use case. Single shows the English translation only. Implemented in
    `Api._overlay_text` (`main.py`). Note: the Japanese line needs a JP-capable overlay
    font (Meiryo / Noto Sans JP); Arial renders it as tofu.
-3. **Vertical-text OCR / MangaOCR** — *Resolved (removed):* MangaOCR was the
-   vertical-text engine, but it is PyTorch-based, and torch is a licensing/size
-   non-starter for the commercial Steam build. It (and the whole torch dependency)
-   has been removed; **MeikiOCR (horizontal, ONNX) is the only engine.** If
-   vertical-text support is wanted again, it must come from a torch-free engine.
-   OCR orientation auto-detection is therefore moot for now (single engine).
+3. **OCR engine choice / vertical text** — *Resolved:* Two engines were removed for
+   the commercial Steam build — **MangaOCR** (PyTorch-based vertical-text engine; torch
+   is a licensing/size non-starter) and **MeikiOCR** (Apache-2.0 code but **LGPL-3.0
+   model weights** — copyleft the build must avoid). The shipped engine is now
+   **PaddleOCR via RapidOCR** (horizontal; PP-OCR detection + PP-OCRv5 recognition,
+   ONNX, **all Apache-2.0**, torch/paddle-free). Any future engine must stay both
+   torch-free and free of copyleft weights. PP-OCRv5 does have some vertical-text
+   capability, but the shipped detection path is horizontal; a dedicated vertical mode
+   is still future work. OCR orientation auto-detection is moot for now (single engine).
 ```

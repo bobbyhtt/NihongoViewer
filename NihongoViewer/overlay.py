@@ -17,6 +17,7 @@ pump; other threads talk to it through thread-safe `update()` / `hide()` calls.
 import ctypes
 import re
 import threading
+import time
 from ctypes import wintypes
 from pathlib import Path
 
@@ -39,6 +40,10 @@ WS_POPUP = 0x80000000
 
 SW_HIDE = 0
 SW_SHOWNOACTIVATE = 4
+
+# We handle WM_CLOSE ourselves (swallow it) so DefWindowProc can't turn a stray
+# close message into a DestroyWindow that would kill the overlay for good.
+WM_CLOSE = 0x0010
 
 ULW_ALPHA = 0x00000002
 AC_SRC_OVER = 0x00
@@ -106,6 +111,8 @@ gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
 gdi32.DeleteDC.restype = wintypes.BOOL
 gdi32.DeleteDC.argtypes = [wintypes.HDC]
 user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.IsWindow.restype = wintypes.BOOL
+user32.IsWindow.argtypes = [wintypes.HWND]
 user32.SetWindowPos.restype = wintypes.BOOL
 user32.SetWindowPos.argtypes = [
     wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
@@ -372,34 +379,58 @@ class Overlay:
         self._running = False
 
     # -- overlay thread -------------------------------------------------------
+    def _ensure_hwnd(self) -> bool:
+        """Guarantee a live overlay HWND, recreating it if it has gone away.
+
+        The window is created once at thread start, but it can later become
+        invalid (a stray WM_CLOSE that slipped through, a DWM/explorer restart,
+        etc.). Nothing else recreates it, so without this check a dead HWND would
+        leave the overlay gone for the whole session — draws would queue and
+        no-op, and even the hide/show hotkey couldn't bring it back (only an app
+        restart could). Recreating on demand makes the overlay self-heal.
+        """
+        if self._hwnd and user32.IsWindow(self._hwnd):
+            return True
+        self._hwnd = None
+        self._visible = False  # a fresh window starts hidden
+        try:
+            self._create_window()
+        except Exception:
+            self._hwnd = None
+        return bool(self._hwnd)
+
     def _run(self) -> None:
-        self._create_window()
+        try:
+            self._create_window()
+        except Exception:
+            self._hwnd = None  # _ensure_hwnd will retry on the first draw
         self._running = True
         self._ready.set()
         msg = wintypes.MSG()
         while self._running:
-            # Drain the Win32 message queue (the window takes no input, but a
-            # topmost window should still pump so DWM keeps it composited).
-            while user32.PeekMessageW(ctypes.byref(msg), 0, 0, 0, 1):
-                user32.TranslateMessage(ctypes.byref(msg))
-                user32.DispatchMessageW(ctypes.byref(msg))
-            with self._lock:
-                pending, self._pending = self._pending, None
-            if pending:
-                # A single draw/show failure (e.g. a transient GDI allocation
-                # failure) must NEVER escape this loop: if it did, the thread would
-                # die and the overlay would stay gone for the rest of the session —
-                # Stop/Start couldn't bring it back, since update()/hide() would
-                # only queue a _pending nothing consumes. Swallow and keep looping.
-                try:
+            # The ENTIRE loop body is guarded: if any step raised — a draw/GDI
+            # failure, a message-pump call, anything — and the exception escaped,
+            # the thread would die and the overlay would be gone for the rest of
+            # the session with no way back but an app restart. Swallow everything
+            # and keep looping (a brief sleep avoids a busy-spin if it's persistent).
+            try:
+                # Drain the Win32 message queue (the window takes no input, but a
+                # topmost window should still pump so DWM keeps it composited).
+                while user32.PeekMessageW(ctypes.byref(msg), 0, 0, 0, 1):
+                    user32.TranslateMessage(ctypes.byref(msg))
+                    user32.DispatchMessageW(ctypes.byref(msg))
+                with self._lock:
+                    pending, self._pending = self._pending, None
+                if pending:
                     if pending[0] == "show":
-                        self._draw(pending[1], pending[2], pending[3])
-                    elif self._visible:
+                        if self._ensure_hwnd():  # revive a dead window before drawing
+                            self._draw(pending[1], pending[2], pending[3])
+                    elif self._visible and self._hwnd:
                         user32.ShowWindow(self._hwnd, SW_HIDE)
                         self._visible = False
-                except Exception:
-                    pass
-            user32.MsgWaitForMultipleObjects(0, None, False, 16, 0x04FF)
+                user32.MsgWaitForMultipleObjects(0, None, False, 16, 0x04FF)
+            except Exception:
+                time.sleep(0.05)
 
     def _create_window(self) -> None:
         import win32con  # noqa: F401  (ensures pywin32 DLLs are loaded)
@@ -407,11 +438,16 @@ class Overlay:
 
         wc = win32gui.WNDCLASS()
         wc.lpszClassName = self._CLASS_NAME
-        wc.lpfnWndProc = {}  # default DefWindowProc for all messages
+        # Handle WM_CLOSE (return 0 = swallow, don't destroy); everything else
+        # falls through to DefWindowProc. Without this, a stray WM_CLOSE would make
+        # DefWindowProc DestroyWindow the overlay and it would stay gone until the
+        # app restarted. Keep a reference alive so the callback isn't GC'd.
+        self._wndproc = {WM_CLOSE: lambda hwnd, msg, wp, lp: 0}
+        wc.lpfnWndProc = self._wndproc
         try:
             win32gui.RegisterClass(wc)
         except Exception:
-            pass  # already registered (e.g. after a soft restart)
+            pass  # already registered (first launch registers it process-wide)
 
         ex_style = (
             WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST

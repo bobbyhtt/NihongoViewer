@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# Steam / Option A build for Yomitori (commercial-safe, MeikiOCR + MADLAD).
+# Steam / Option A build for Yakutori (commercial-safe: PaddleOCR/RapidOCR + MADLAD).
 # Produces a FOLDER build at build/main.dist/ (NOT onefile — Steam ships folders,
 # and onefile would re-extract the bundled models to temp on every launch).
-# Model weights are shipped in build/main.dist/models/ (see copy_models step),
-# so the app runs fully offline with no first-run download.
+# Model weights are shipped locally (no Hugging Face at runtime): the OCR ONNX is
+# bundled via --include-data-dir below, and the MADLAD CTranslate2 model is copied
+# into build/main.dist/models/madlad/ as a post-build step (it's ~3 GB, so it's
+# copied into the dist rather than run through Nuitka). The app then runs fully
+# offline with no first-run download.
+# NOTE: unidic_lite needs --include-package-data (not just --include-package) — the
+# module alone is useless without its dicdir payload, and fugashi.Tagger() then fails
+# behind a guarded import, silently disabling name protection + furigana/Read Mode.
 cd "C:/Users/bobby/Documents/NihongoViewer/NihongoViewer" || exit 1
 .venv/Scripts/python.exe -m nuitka \
   --standalone \
@@ -23,14 +29,19 @@ cd "C:/Users/bobby/Documents/NihongoViewer/NihongoViewer" || exit 1
   --include-data-files=icon.ico=icon.ico \
   --include-data-dir=ui=ui \
   --include-data-dir=fonts=fonts \
+  --include-data-dir=dict=dict \
   --include-package=ocr \
+  --include-data-dir=ocr/models=ocr/models \
   --include-package=translate \
   --include-package=ctranslate2 \
-  --include-package=meikiocr \
-  --include-package-data=meikiocr \
+  --include-package=rapidocr_onnxruntime \
+  --include-package-data=rapidocr_onnxruntime \
   --include-package=sentencepiece \
-  --include-package=huggingface_hub \
+  --include-package=fugashi \
+  --include-package=unidic_lite \
+  --include-package-data=unidic_lite \
+  --include-package=jaconv \
   --output-dir=build \
-  --output-filename=Yomitori.exe \
+  --output-filename=Yakutori.exe \
   main.py
 echo "EXIT_CODE=$?"

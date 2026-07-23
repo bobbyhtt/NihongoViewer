@@ -67,7 +67,7 @@ def list_windows() -> list[dict]:
         if _is_cloaked(hwnd):
             return
         # Skip our own launcher window.
-        if title == "Yomitori":
+        if title == "Yakutori":
             return
         left, top, right, bottom = win32gui.GetWindowRect(hwnd)
         if right - left <= 0 or bottom - top <= 0:

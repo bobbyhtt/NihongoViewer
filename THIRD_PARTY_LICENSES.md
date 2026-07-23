@@ -1,25 +1,18 @@
 # Third-Party Licenses and Attributions
 
-NihongoViewer includes, links against, and/or downloads at runtime a number of
-third-party components. Each is the property of its respective author(s) and is
-licensed under its own terms, reproduced or referenced below. This file is
-provided to satisfy the attribution and notice requirements of those licenses
-(e.g. Apache-2.0 §4, the MIT/BSD reproduction requirement, and the SIL Open Font
-License bundling requirement).
+Yakutori includes and/or links against the third-party components listed below.
+Each is the property of its respective author(s) and is licensed under its own
+terms. This file is provided to satisfy the attribution and notice requirements of
+those licenses.
 
-Nothing in the NihongoViewer EULA (see `LICENSE`) limits any right granted to you
-under a component's own license.
-
-> **Legend — how each component reaches the user**
-> **Bundled**: shipped inside the NihongoViewer distribution.
-> **Runtime download**: not shipped by us; downloaded from a third party on first
-> run into the user's local cache (`~/.cache/huggingface/`).
+Nothing in the Yakutori EULA (see `LICENSE`) limits any right granted to you under
+a component's own license.
 
 ---
 
 ## 1. Bundled Python dependencies (code)
 
-| Component | Version (min) | License | Notes |
+| Component | Version (min) | License | Role |
 |---|---|---|---|
 | pywebview | ≥5.0 | BSD 3-Clause | Native window / UI shell |
 | pywin32 | ≥306 | PSF License (BSD-style) | Win32 API access |
@@ -27,83 +20,64 @@ under a component's own license.
 | numpy | ≥1.24 | BSD 3-Clause | Arrays |
 | platformdirs | ≥4.0 | MIT | Config-dir resolution |
 | windows-capture | ≥2.0 | MIT | Windows Graphics Capture binding |
-| meikiocr (code) | ≥0.3.4 | Apache-2.0 | OCR engine code — **see model note in §3** |
+| rapidocr-onnxruntime | ≥1.2.3 | Apache-2.0 | OCR engine (PP-OCR detection + recognition via ONNX) |
+| onnxruntime | ≥1.17 | MIT | ONNX inference runtime (OCR) |
+| opencv-python-headless | ≥4.5 | Apache-2.0 | Image operations for OCR |
+| pyclipper | ≥1.3 | MIT (Clipper: Boost Software License 1.0) | OCR detection post-processing |
+| shapely | ≥2.0 | BSD 3-Clause | OCR detection post-processing |
+| PyYAML | ≥6.0 | MIT | rapidocr configuration parsing |
+| six | ≥1.16 | MIT | rapidocr compatibility shim |
 | ctranslate2 | ≥4.0 | MIT | Translation inference runtime |
 | sentencepiece | ≥0.2.0 | Apache-2.0 | Tokenizer |
-| fugashi | ≥1.3 | MIT | MeCab wrapper (name protection) |
-| unidic-lite | ≥1.0.8 | MIT / WTFPL | Wrapper; **bundles UniDic 2.1.2 dictionary data — BSD License** (© UniDic Consortium) |
-| jaconv | ≥0.3 | MIT | kana ↔ romaji |
+| fugashi | ≥1.3 | MIT | MeCab wrapper |
+| unidic-lite | ≥1.0.8 | MIT / WTFPL; bundles UniDic 2.1.2 data (© UniDic Consortium), released under the GPL, the LGPL, or the BSD License at the licensee's option — Yakutori elects the **BSD License** | Japanese morphological dictionary |
+| jaconv | ≥0.3 | MIT | Kana ↔ romaji conversion |
+| bottle | (transitive) | MIT | HTTP server used by the pywebview shell |
+| Jinja2 | (transitive) | BSD 3-Clause | Templating (pywebview) |
+| MarkupSafe | (transitive) | BSD 3-Clause | String escaping (Jinja2) |
+| proxy_tools | (transitive) | MIT | Lazy proxies (pywebview) |
+| pythonnet | (transitive) | MIT | .NET bridge for the WebView2 shell |
+| clr_loader | (transitive) | MIT | .NET runtime loader (pythonnet) |
+| cffi | (transitive) | MIT | C foreign-function interface (clr_loader) |
+| protobuf | (transitive) | BSD 3-Clause | Serialization (onnxruntime) |
+| typing_extensions | (transitive) | PSF License | Typing backports |
 
-> **Anki `.apkg` export** is built entirely with the Python **standard library**
-> (`sqlite3` + `zipfile` + `json`) — see `anki_export.py`.
+## 2. Bundled fonts
 
-## 2. Bundled fonts — SIL Open Font License 1.1
-
-All three fonts are licensed under the **SIL Open Font License, Version 1.1**
-(`OFL-1.1`). Their full license texts ship alongside the fonts in
-`NihongoViewer/fonts/`.
+All bundled fonts are licensed under the **SIL Open Font License, Version 1.1**
+(`OFL-1.1`). Their full license texts ship alongside the fonts in `fonts/`.
 
 | Font | Source | License file |
 |---|---|---|
 | Noto Sans JP | google/fonts | `fonts/NotoSansJP-OFL.txt` |
-| M PLUS Rounded 1c | google/fonts | (OFL-1.1) |
+| M PLUS Rounded 1c | google/fonts | OFL-1.1 |
 | Shippori Mincho | google/fonts | `fonts/ShipporiMincho-OFL.txt` |
 
-**OFL compliance notes (important for a commercial release):**
-- OFL fonts **may** be bundled with, and sold as part of, application software.
-- The OFL license text **must** ship with the fonts (it does).
-- You may **not** sell the fonts on their own, and you may not use the fonts'
-  Reserved Font Names on any modified version.
+## 3. Machine-learning models (bundled)
 
-## 3. Machine-learning model weights (downloaded at runtime — NOT bundled)
-
-These weights are **not distributed by NihongoViewer**. They are downloaded from
-the publishers below on first run and are governed solely by the publisher's stated
-license.
-
-| Model | Publisher / repo | Stated license | Used by |
+| Model | Origin | License | Role |
 |---|---|---|---|
-| MADLAD-400-3B MT (int8 CT2 export) | `Nextcloud-AI/madlad400-3b-mt-ct2-int8` (from Google `google/madlad400-3b-mt`) | **Apache-2.0** | Translation |
-| MeikiOCR text-recognition | `rtr46/meiki.txt.recognition.v0` | **LGPL-3.0** ⚠️ | OCR (default) |
-| MeikiOCR text-detection | `rtr46/meiki.text.detect.v0` | **LGPL-3.0** ⚠️ | OCR (default) |
+| MADLAD-400-3B MT (int8 CTranslate2 export) | `Nextcloud-AI/madlad400-3b-mt-ct2-int8`, from Google `google/madlad400-3b-mt` | Apache-2.0 | Translation |
+| PP-OCRv5 mobile recognition (`ocr/models/japan_ppocrv5_rec.onnx`) | PaddleOCR `PP-OCRv5_mobile_rec`, converted to ONNX (`ilaylow/PP_OCRv5_mobile_onnx`); character dictionary from PaddleOCR `ppocrv5_dict.txt` | Apache-2.0 | OCR recognition |
+| PP-OCR text-detection and angle-classification | Included in the `rapidocr-onnxruntime` package | Apache-2.0 | OCR detection |
 
-### ⚠️ LGPL-3.0 notice — MeikiOCR model weights
+## 4. Dictionary data
 
-The MeikiOCR **model weights** (used by the default OCR engine) are published under
-the **GNU Lesser General Public License v3.0**, even though the MeikiOCR **code** is
-Apache-2.0. Key consequences for a commercial product:
+| Data | Source | License |
+|---|---|---|
+| JMdict / JMnedict | Electronic Dictionary Research and Development Group (EDRDG), via `scriptin/jmdict-simplified` | CC BY-SA 4.0 |
 
-- LGPL-3.0 **permits** commercial use and distribution.
-- If you ever **redistribute** these weights (e.g. bundle them in the Steam build or
-  a patch), LGPL obligations attach: you must supply the LGPL text, give notice that
-  the component is used and LGPL-covered, and ensure the end user can **replace**
-  that component with a modified version and run the result. You must not add terms
-  that forbid reverse-engineering for that purpose.
-- NihongoViewer's current design **downloads these weights at runtime rather than
-  bundling them**, so the LGPL work is conveyed to the user by Hugging Face, not by
-  you — which substantially reduces (but does not automatically eliminate) your
-  obligations. Keeping the models as a runtime download, and keeping the OCR engine
-  swappable so a user can substitute their own model, is the safest posture.
-- **This is a genuine legal question for a paid release. Have qualified counsel
-  confirm your specific distribution model before shipping on Steam.**
+JMdict/JMnedict is © the Electronic Dictionary Research and Development Group and
+is used under the Creative Commons Attribution-ShareAlike 4.0 International
+licence. The SQLite index built or shipped by Yakutori is a reformatted derivative
+of that data and remains licensed under CC BY-SA 4.0. Attribution is also shown at
+the point of use in Read Mode. Licence text:
+https://creativecommons.org/licenses/by-sa/4.0/ — see also https://www.edrdg.org/
+and https://github.com/scriptin/jmdict-simplified.
 
-## 4. Forward-looking note — PySide6 / Qt
-
-The target architecture in `CLAUDE.md` calls for migrating the control panel to
-**PySide6 (Qt)**. The current build does **not** use it (the UI runs on pywebview,
-BSD-3). PySide6/Qt is offered under **LGPL-3.0** (or a paid commercial Qt license).
-If you migrate, the same LGPL considerations above apply to Qt, and you should
-evaluate whether the LGPL dynamic-linking/relinking conditions or a commercial Qt
-license best fit a closed-source Steam product.
-
----
-
-## Full license texts
+## 5. Full license texts
 
 The complete texts of the licenses referenced above (Apache-2.0, MIT, BSD-3-Clause,
-LGPL-3.0, PSF, and SIL OFL-1.1) are available from each project's repository. The
-OFL-1.1 texts for the bundled fonts are included in `NihongoViewer/fonts/`. Before
-distributing on Steam, verify that the exact version of each dependency you ship
-matches the license stated here (licenses can change between releases).
-
-_Last reviewed: 2026-07-18._
+CC BY-SA 4.0, PSF, Boost Software License 1.0, WTFPL, and SIL OFL-1.1) are
+available from each project's repository. The OFL-1.1 texts for the bundled fonts
+are included in `fonts/`.

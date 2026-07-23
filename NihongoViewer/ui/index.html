@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Yomitori</title>
+  <title>Yakutori</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -48,8 +48,8 @@
     <div class="content">
       <!-- Title bar -->
       <header class="titlebar">
-        <img class="logo-img" src="logo.png" alt="Yomitori logo" />
-        <h1>Yomitori - Japanese screen capture translator</h1>
+        <img class="logo-img" src="logo.png" alt="Yakutori logo" />
+        <h1>Yakutori - Japanese screen capture translator</h1>
       </header>
 
       <!-- =============================== CAPTURE ============================ -->
@@ -171,7 +171,7 @@
           <div class="text-header">
             <h2 class="panel-title">TEXT</h2>
             <div class="engines">
-              <span class="dot" id="ocr-status">● OCR: MeikiOCR</span>
+              <span class="dot" id="ocr-status">● OCR: RapidOCR</span>
               <span class="dot" id="tr-status">● MADLAD-400</span>
             </div>
           </div>
@@ -464,9 +464,9 @@
       <div class="page" id="page-about">
         <section class="panel about-hero">
           <div class="about-brand">
-            <img class="about-logo-img" src="logo.png" alt="Yomitori logo" />
+            <img class="about-logo-img" src="logo.png" alt="Yakutori logo" />
             <div>
-              <h2 class="about-name">Yomitori</h2>
+              <h2 class="about-name">Yakutori</h2>
               <span class="about-ver">Version 1.0.0</span>
             </div>
           </div>
@@ -477,15 +477,15 @@
           </p>
           <div class="about-meta">
             <span>© 2026 Tanachot Srisombat. All rights reserved.</span>
-            <span>Licensed under the Yomitori End User License Agreement.</span>
-            <a class="link" href="mailto:tanachot.Yomitori@hotmail.com">tanachot.Yomitori@hotmail.com</a>
+            <span>Licensed under the Yakutori End User License Agreement.</span>
+            <a class="link" href="mailto:tanachot.Yakutori@hotmail.com">tanachot.Yakutori@hotmail.com</a>
           </div>
         </section>
 
         <section class="panel">
           <h2 class="panel-title">OPEN-SOURCE LICENSES</h2>
           <p class="about-note">
-            Yomitori is built with the open-source components below, each used
+            Yakutori is built with the open-source components below, each used
             under its own license. The complete license texts are included in the
             <a class="link" href="#" id="open-licenses-link">THIRD_PARTY_LICENSES</a>
             file shipped alongside the application.
@@ -496,8 +496,8 @@
               <h3 class="lic-head">Translation &amp; OCR</h3>
               <ul class="lic-list">
                 <li><span class="lic-name">MADLAD-400-3B</span><span class="lic-desc">Machine-translation model · Google</span><span class="lic-badge">Apache-2.0</span></li>
-                <li><span class="lic-name">MeikiOCR</span><span class="lic-desc">Text recognition · code by rtr46</span><span class="lic-badge">Apache-2.0</span></li>
-                <li><span class="lic-name">MeikiOCR models</span><span class="lic-desc">Recognition &amp; detection weights · downloaded at runtime, replaceable</span><span class="lic-badge amber">LGPL-3.0</span></li>
+                <li><span class="lic-name">RapidOCR</span><span class="lic-desc">ONNX OCR runtime (PP-OCR det + rec)</span><span class="lic-badge">Apache-2.0</span></li>
+                <li><span class="lic-name">PP-OCRv5 model</span><span class="lic-desc">Japanese text-recognition weights · bundled</span><span class="lic-badge">Apache-2.0</span></li>
                 <li><span class="lic-name">CTranslate2</span><span class="lic-desc">Translation inference engine</span><span class="lic-badge">MIT</span></li>
                 <li><span class="lic-name">SentencePiece</span><span class="lic-desc">Tokenizer</span><span class="lic-badge">Apache-2.0</span></li>
                 <li><span class="lic-name">ONNX Runtime</span><span class="lic-desc">OCR model runtime</span><span class="lic-badge">MIT</span></li>
@@ -517,9 +517,6 @@
                 <li><span class="lic-name">Pillow</span><span class="lic-desc">Imaging</span><span class="lic-badge">MIT-CMU</span></li>
                 <li><span class="lic-name">NumPy</span><span class="lic-desc">Numerical arrays</span><span class="lic-badge">BSD-3-Clause</span></li>
                 <li><span class="lic-name">platformdirs</span><span class="lic-desc">Config-directory resolution</span><span class="lic-badge">MIT</span></li>
-                <li><span class="lic-name">huggingface-hub</span><span class="lic-desc">Model download &amp; cache</span><span class="lic-badge">Apache-2.0</span></li>
-                <li><span class="lic-name">certifi</span><span class="lic-desc">CA certificate bundle</span><span class="lic-badge amber">MPL-2.0</span></li>
-                <li><span class="lic-name">tqdm</span><span class="lic-desc">Progress reporting</span><span class="lic-badge amber">MPL-2.0 · MIT</span></li>
               </ul>
             </div>
 

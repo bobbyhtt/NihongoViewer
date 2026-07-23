@@ -99,7 +99,7 @@ body {
   line-height: 1;
 }
 .logo-a { color: var(--green); opacity: 0.85; }
-/* Brand logo image in the title bar (Yomitori bird), 1.25x the original 30px. */
+/* Brand logo image in the title bar (Yakutori bird), 1.25x the original 30px. */
 .logo-img { width: 38px; height: 38px; object-fit: contain; display: block; }
 .titlebar h1 { font-size: 20px; font-weight: 600; letter-spacing: 0.2px; }
 
@@ -1223,7 +1223,10 @@ a.crumb:hover { color: var(--text); }
 .lic-list { list-style: none; display: flex; flex-direction: column; gap: 2px; }
 .lic-list li {
   display: grid;
-  grid-template-columns: minmax(120px, 0.9fr) 1.6fr auto;
+  /* Each row is its own grid, so the name column must be a FIXED width: with a
+     fractional one the varying badge width ("MIT" vs "CC BY-SA 4.0") resolved it
+     differently per row and the descriptions came out staggered. */
+  grid-template-columns: 180px 1fr auto;
   align-items: center;
   gap: 12px;
   padding: 7px 8px;

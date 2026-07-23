@@ -189,7 +189,7 @@ function stopCapture() {
 
 startBtn.addEventListener("click", () => {
   if (!hasApi()) {
-    alert("Run this through Yomitori (python main.py) to use capture.");
+    alert("Run this through Yakutori (python main.py) to use capture.");
     return;
   }
   capturing ? stopCapture() : startCapture();
@@ -216,7 +216,7 @@ let ocrTimer = null;
 let ocrBusy = false; // guards against overlapping process_frame() calls
 let engineReady = false;
 let translatorReady = false;
-let currentEngine = "MeikiOCR";
+let currentEngine = "RapidOCR";
 
 function setDetected(text, dim = false) {
   detectedJa.textContent = text;
@@ -474,7 +474,7 @@ async function loadTranslator() {
   trStatus.textContent = translatorReady ? `● ${backend}` : "● MADLAD-400 (unavailable)";
 }
 
-// Load the OCR engine's weights. MeikiOCR is the only engine (no picker), so this
+// Load the OCR engine's weights. RapidOCR is the only engine (no picker), so this
 // runs once at startup; the pipeline stage still loads via the backend Api.
 async function selectEngine(name) {
   if (!hasApi()) return;
@@ -491,7 +491,10 @@ async function selectEngine(name) {
 
   if (res && res.ok) {
     engineReady = true;
-    setOcrStatus(name);
+    // The backend may have fallen back to a different engine (e.g. a saved config
+    // named a removed engine); reflect the engine that actually loaded.
+    currentEngine = res.engine || name;
+    setOcrStatus(currentEngine);
     notifyCaptureChanged(); // refresh the Create-card status badge with the engine
   } else {
     engineReady = false;

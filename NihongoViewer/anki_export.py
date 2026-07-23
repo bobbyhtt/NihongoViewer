@@ -58,7 +58,7 @@ hr#answer { margin: 16px 0; }
 # Word / Sentence hold Anki furigana notation (``漢字[かんじ]``), so the built-in
 # ``{{furigana:…}}`` filter renders kana readings over the kanji on the card.
 TEMPLATES = [{
-    "name": "Yomitori",
+    "name": "Yakutori",
     "qfmt": (
         '{{#Image}}<div class="image">{{Image}}</div>{{/Image}}'
         '{{#Word}}<div class="word">{{furigana:Word}}</div>{{/Word}}'
@@ -205,7 +205,7 @@ def _models_json(now: int) -> dict:
     return {
         str(MODEL_ID): {
             "id": MODEL_ID,
-            "name": "Yomitori Card",
+            "name": "Yakutori Card",
             "type": 0,
             "mod": now,
             "usn": -1,

@@ -1,14 +1,13 @@
-NihongoViewer — End User License Agreement (EULA)
+Yakutori — End User License Agreement (EULA)
 
 Copyright (c) 2026 Tanachot Srisombat. All rights reserved.
 
 IMPORTANT — READ CAREFULLY. This End User License Agreement ("Agreement") is a
 legal agreement between you ("You" or "Licensee") and Tanachot Srisombat
-("Licensor") for the NihongoViewer software application, including its
-executables, data files, and accompanying documentation (collectively, the
-"Software"). By downloading, installing, or using the Software, You agree to be
-bound by the terms of this Agreement. If You do not agree, do not install or use
-the Software.
+("Licensor") for the Yakutori software application, including its executables,
+data files, and accompanying documentation (collectively, the "Software"). By
+downloading, installing, or using the Software, You agree to be bound by the
+terms of this Agreement. If You do not agree, do not install or use the Software.
 
 1. LICENSE GRANT
    Subject to Your compliance with this Agreement and payment of any applicable
@@ -18,7 +17,7 @@ the Software.
 
 2. RESTRICTIONS
    Except to the extent this restriction is prohibited by applicable law or
-   permitted by the license of a third-party component (see Section 6), You may
+   permitted by the license of a third-party component (see Section 4), You may
    NOT:
    (a) copy, distribute, sublicense, rent, lease, lend, sell, or otherwise
        transfer the Software or any copy of it;
@@ -37,20 +36,21 @@ the Software.
 
 4. THIRD-PARTY COMPONENTS
    The Software incorporates or makes use of third-party open-source and
-   free-software components, and downloads certain machine-learning model weights
-   at runtime. Those components are licensed to You under their own respective
-   license terms, which are set out in the accompanying THIRD_PARTY_LICENSES file.
-   To the extent any third-party license grants You rights that conflict with the
-   restrictions in Section 2, that third-party license governs with respect to
-   that specific component. You agree to comply with all such third-party license
-   terms.
+   free-software components, including bundled machine-learning model weights.
+   Those components are licensed to You under their own respective license terms,
+   which are set out in the accompanying THIRD_PARTY_LICENSES file. To the extent
+   any third-party license grants You rights that conflict with the restrictions
+   in Section 2, that third-party license governs with respect to that specific
+   component. You agree to comply with all such third-party license terms.
 
-5. MODEL WEIGHTS DOWNLOADED AT RUNTIME
-   The Software downloads OCR and translation model weights from third-party
-   sources (e.g. Hugging Face) on first run. These weights are not distributed by
-   Licensor and are subject to the licenses stated by their respective publishers,
-   as summarized in THIRD_PARTY_LICENSES. Your use of those weights is governed by
-   those licenses.
+5. BUNDLED MODEL WEIGHTS AND DICTIONARY DATA
+   The optical character recognition and translation model weights distributed
+   with the Software remain the property of their respective publishers and are
+   licensed under their own terms, as set out in THIRD_PARTY_LICENSES. The
+   Software may also download Japanese dictionary data (JMdict/JMnedict) on first
+   use; that data is provided by the Electronic Dictionary Research and
+   Development Group under the Creative Commons Attribution-ShareAlike 4.0
+   licence. Your use of those weights and that data is governed by those licenses.
 
 6. FONTS
    Bundled fonts are licensed under the SIL Open Font License, Version 1.1, and
@@ -88,4 +88,4 @@ the Software.
 For distribution on the Steam platform, Your use of the Software is also subject
 to the Steam Subscriber Agreement between You and Valve Corporation.
 
-Contact: tanachot.Yomitori@hotmail.com
+Contact: tanachot.Yakutori@hotmail.com
