@@ -5,6 +5,7 @@ katakana belongs, or vice versa — the glyphs are indistinguishable in many gam
 fonts:
 
     エ<->工   カ<->力   ニ<->二   ハ<->八   ロ<->口   タ<->夕   オ<->才   ー<->一
+    ト <- 卜  (one-directional, see _ONE_WAY)
 
 These are single-glyph slips inside an otherwise-correct word (``エドワード`` read
 as ``工ドワ一ド``; ``協力`` read as ``協カ``; ``二人`` read as ``ニ人``), and they
@@ -28,9 +29,17 @@ import re
 _KANJI2KATA = {
     "工": "エ", "力": "カ", "二": "ニ", "八": "ハ",
     "口": "ロ", "夕": "タ", "才": "オ", "一": "ー",
+    "卜": "ト",
 }
 # katakana glyph -> the kanji it is usually a misread of (the inverse).
-_KATA2KANJI = {kata: kanji for kanji, kata in _KANJI2KATA.items()}
+#
+# ``卜`` is deliberately left out of the inverse: it is a rare kanji (divination)
+# while ``ト`` is everywhere, including right next to kanji (``コート姿``), so
+# snapping ``ト`` to ``卜`` would corrupt far more text than it repairs. The pair
+# is therefore one-directional — we fix ``卜ワ`` -> ``トワ`` but never the reverse.
+_ONE_WAY = {"卜"}
+_KATA2KANJI = {kata: kanji for kanji, kata in _KANJI2KATA.items()
+               if kanji not in _ONE_WAY}
 
 # Every glyph that COULD be a misread either way — the ones we reason about.
 _AMBIG = set(_KANJI2KATA) | set(_KATA2KANJI)

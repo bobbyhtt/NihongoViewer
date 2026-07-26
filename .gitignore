@@ -217,8 +217,8 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Bundled MADLAD translation model (~3 GB) — shipped in the build/Steam depot,
-# copied into NihongoViewer/models/madlad/ locally; never committed to git.
+# Bundled Qwen3-4B translation model (~4 GB) — shipped in the build/Steam depot,
+# copied into NihongoViewer/models/qwen/ locally; never committed to git.
 # (The small Apache-2.0 OCR model under NihongoViewer/ocr/models/ IS committed.)
 /NihongoViewer/models/
 

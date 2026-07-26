@@ -279,14 +279,24 @@ def to_data_url(img: Image.Image, max_width: int = 640, quality: int = 82) -> st
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-# Frame-change detection (see main.Api.process_frame's tiered skipping). A tiny
-# grayscale "signature" of a frame; two frames are "the same" when their
-# signatures differ by less than a small threshold. Kept coarse and cheap — its
-# only job is to catch a screen where *nothing* moved (paused game, still
-# dialogue) so the pipeline can skip OCR/translation. A moving background (a
-# cutscene) fails this on purpose and falls through to the OCR-text check.
-_SIG_SIZE = 32               # 32x32 grayscale = 1024 samples, ~sub-millisecond
-_SIG_THRESHOLD = 2.0         # mean per-pixel abs diff (0-255) below which = "same"
+# Frame-change detection (see main.Api.process_frame's tiered skipping). A small
+# grayscale "signature" of a frame; its only job is to catch a screen where
+# *nothing* moved (paused game, still dialogue) so the pipeline can skip
+# OCR/translation, while still noticing a NEW dialogue line.
+#
+# We compare by counting cells that changed *significantly*, NOT by averaging.
+# A dialogue line is a small, localized part of the whole window: on a mostly
+# uniform background (a pale/white VN scene) a full line change moves the mean of
+# a downscaled frame by only ~0.3/255 — far under any averaging threshold — so
+# averaging silently skipped every new line until the user hit Stop/Start (the
+# text just "wouldn't update"). A busy/animated background happened to clear the
+# average threshold, which is why some games worked and white ones didn't.
+# Counting cells whose grayscale moved by >_CELL_DELTA instead: a new line lights
+# up ~200 cells at 128x128, while sensor jitter and a blinking cursor stay in the
+# single digits — a clean, background-independent split.
+_SIG_SIZE = 128              # 128x128 grayscale — fine enough to resolve a text line
+_CELL_DELTA = 16             # per-cell grayscale move (0-255) that counts as "changed"
+_MIN_CHANGED_CELLS = 40      # fewer changed cells than this => screen is unchanged
 
 
 def frame_signature(img: Image.Image):
@@ -298,9 +308,15 @@ def frame_signature(img: Image.Image):
 
 
 def signatures_match(a, b) -> bool:
-    """True if two `frame_signature` arrays are near-identical (screen unchanged)."""
+    """True if two `frame_signature` arrays are near-identical (screen unchanged).
+
+    "Near-identical" = fewer than `_MIN_CHANGED_CELLS` cells moved by more than
+    `_CELL_DELTA`. Localized changes (a new dialogue line) survive this where an
+    average would wash them out; see the constants above.
+    """
     if a is None or b is None or a.shape != b.shape:
         return False
     import numpy as np
 
-    return float(np.abs(a - b).mean()) <= _SIG_THRESHOLD
+    changed = int((np.abs(a - b) > _CELL_DELTA).sum())
+    return changed < _MIN_CHANGED_CELLS

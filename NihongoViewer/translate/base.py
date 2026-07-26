@@ -1,7 +1,7 @@
 """Common interface for translation backends (pipeline stage 3).
 
 Like the OCR stage, the pipeline only ever talks to a `Translator` ABC so the
-backend is swappable, even though we ship one implementation (MADLAD-400).
+backend is swappable, even though we ship one implementation (Qwen3-4B).
 """
 
 import re
@@ -71,10 +71,12 @@ class Translator(ABC):
         where JMdict has "footjob"). Only non-headwords (names, phrases, novel
         coinages) fall back to the model.
 
-        The model path: sentence-level MT pads a bare word into a whole clause
-        ("学生" -> "Students are students."). Appending a sentence terminator coaxes
-        a short, complete rendering, and `_tidy_gloss` removes the leftover
-        repetition. Goes through `translate()` (hence the fuzzy cache when wrapped).
+        The model path appends a sentence terminator and runs `_tidy_gloss` over
+        the result. Both were needed because sentence-level MT padded a bare word
+        into a whole clause ("学生" -> "Students are students."); an
+        instruction-following backend rarely does that, so they now act as a cheap
+        guard rather than a necessity. Goes through `translate()` (hence the fuzzy
+        cache when wrapped).
         """
         core = (text or "").strip()
         if not core:

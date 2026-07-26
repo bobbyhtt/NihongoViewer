@@ -458,11 +458,12 @@ function applySettings(s) {
   setSpeedButtons(currentSpeed); // reflect the saved OCR speed in the dialog
 }
 
-// Load the translation backend (MADLAD-400). Slow on first run (model download
-// ~1.65 GB).
+// Load the translation backend (Qwen3-4B). Slow on first run (~4 GB of int8
+// weights read off disk).
 async function loadTranslator() {
   if (!hasApi()) return;
-  trStatus.textContent = "● MADLAD-400 (loading…)";
+  trStatus.textContent = "● Qwen3-4B (loading…)";
+  trStatus.title = "";
   let res;
   try {
     res = await window.pywebview.api.load_translator();
@@ -470,8 +471,18 @@ async function loadTranslator() {
     res = { ok: false, error: String(e) };
   }
   translatorReady = !!(res && res.ok);
-  const backend = (res && res.backend) || "MADLAD-400";
-  trStatus.textContent = translatorReady ? `● ${backend}` : "● MADLAD-400 (unavailable)";
+  const backend = (res && res.backend) || "Qwen3-4B";
+  trStatus.textContent = translatorReady ? `● ${backend}` : "● Qwen3-4B (unavailable)";
+  if (translatorReady) {
+    trStatus.title = "";
+    return;
+  }
+  // Say WHY, like the OCR path does. The backend's message is actionable
+  // ("Qwen model not found. Expected … at models/qwen …"), and showing only
+  // "unavailable" threw it away — leaving a missing model looking like a bug.
+  const msg = (res && res.error) || "failed to load";
+  trStatus.title = msg;          // full text on hover, survives later OCR output
+  setDetected(`${backend} unavailable — ${msg}`, true);
 }
 
 // Load the OCR engine's weights. RapidOCR is the only engine (no picker), so this

@@ -11,7 +11,7 @@ captured frame, translates any detected Japanese text to English, and draws the
 translation on a floating overlay on top of (or below) the source window.
 
 **Everything runs locally** — no cloud APIs, no network calls at runtime, no telemetry.
-The ML models (OCR + MADLAD translation) are **bundled and loaded from local
+The ML models (OCR + Qwen3 translation) are **bundled and loaded from local
 directories** — no Hugging Face at runtime. The only optional network access is a
 one-time JMdict Read-Mode dictionary download (~11 MB, stdlib `urllib`), which is
 also bundleable (`dict/jmdict.sqlite`).
@@ -30,18 +30,19 @@ Screen Capture -> OCR -> Translation -> Display
    and torch/paddle-free. (Two engines were removed: MangaOCR, a torch-based
    vertical-text engine; and MeikiOCR, whose model *weights* were LGPL-3.0 — both
    non-starters for the commercial Steam build. See [Open decisions](#open-decisions).)
-3. **Translation** — MADLAD-400-3B (`google/madlad400-3b-mt`, Apache-2.0 —
-   commercial-safe) translates JA → EN locally via CTranslate2. Identical/near-identical
+3. **Translation** — Qwen3-4B (`Qwen/Qwen3-4B`, Apache-2.0 — commercial-safe)
+   translates JA → EN locally via CTranslate2. Identical/near-identical
    source text should hit a cache instead of re-translating (**fuzzy** match, not just
-   exact match). Before the model sees the text it is (a) **name-protected** — katakana
+   exact match). Before the model sees the text it is **name-protected** — katakana
    the analyzer tags as a proper noun is romanized so the model can't mistranslate it
    (`ヤツシロ` → `Yatsushiro`, not "you bitch"; loanwords like `コーヒー` are left alone),
    and a **furigana** term `漢字(かな)` is replaced by its romanized reading
    (`鬼戮(きりく)` → `Kiriku`) instead of the model echoing the untranslatable kanji, both
-   with a user `names.json` override in the config dir — and (b) **sentence-split**, so
-   a long multi-sentence line doesn't make the model drop a clause. Segments with no
-   Japanese left (an already-romanized name) skip the model to avoid hallucinated
-   padding. **JMdict assist** (see `dictionary.py`): a single *word* (the Create-card
+   with a user `names.json` override in the config dir. The whole line goes to the
+   model as **one unit** — the old per-sentence splitting was a MADLAD workaround
+   (it dropped clauses); Qwen3 translates better with the surrounding sentences
+   visible. Lines with no Japanese left (an already-romanized name plate) skip the
+   model entirely. **JMdict assist** (see `dictionary.py`): a single *word* (the Create-card
    Word field) is glossed from JMdict first — the model romanizes rare/compound words
    it doesn't know (`足コキ` → "Foot Koki" vs JMdict's "footjob"); only non-headwords
    fall back to the model. And when the model echoes an untranslated *kanji* word in a
@@ -129,23 +130,31 @@ cleanly.
     code and weights are Apache-2.0 (commercial-clean). **Do not reintroduce any
     PyTorch-based OCR** (e.g. manga-ocr) or any model with copyleft weights (e.g.
     MeikiOCR's LGPL-3.0 weights): both are non-starters for the commercial Steam build.
-- **Translation**: MADLAD-400-3B (`google/madlad400-3b-mt`, Apache-2.0) via
-  `ctranslate2` + `sentencepiece`, using the ready-made int8 CT2 export
-  `Nextcloud-AI/madlad400-3b-mt-ct2-int8` (~1.65 GB) — **no torch, ever** (no
-  conversion step). It's a T5: single shared `spiece.model` vocab and a `<2en>`
-  target-language prefix token. MADLAD pads/repeats short lines, so decode with a
-  repetition penalty + no-repeat-ngram. Rejected predecessors (all removed): Sugoi V4
-  (license forbids commercial use), OPUS-MT (`Helsinki-NLP/opus-mt-ja-en`, Apache-2.0
-  — too weak), FuguMT (`staka/fugumt-ja-en`, CC-BY-SA — better than OPUS-MT but still
-  not good enough, and needed a torch conversion step). The model is **bundled and
-  loaded from a local directory** (`models/madlad/`, override with
-  `NIHONGOVIEWER_MADLAD_DIR=<path>`) — **no `huggingface_hub` at runtime**. Trade-off:
-  3B is heavier — ~0.5-2 s per *new* line on CPU and ~2 GB RAM, largely hidden by the
-  fuzzy cache.
+- **Translation**: Qwen3-4B (`Qwen/Qwen3-4B`, Apache-2.0) via `ctranslate2`'s
+  decoder-only `Generator` + `tokenizers` (byte-level BPE). **No torch at runtime**;
+  torch/transformers are needed only *offline on the build machine* to produce the
+  int8 CT2 export, and are never shipped. Two Qwen3 specifics: the prompt is ChatML
+  built by hand (no `transformers`/`jinja2` at runtime), and it must close the
+  `<think></think>` block immediately — Qwen3 reasons out loud by default, which
+  multiplies latency for no benefit here. The system prompt is passed as CT2's
+  `static_prompt` so its KV cache is reused across lines. Decode greedily
+  (`sampling_topk=1`) so the fuzzy cache's "same source → same translation"
+  assumption holds. Rejected alternatives: **MADLAD-400-3B** (Apache-2.0 — replaced;
+  a pure seq2seq MT model, it dropped clauses from multi-sentence lines, padded short
+  ones, and lost register, which is why so much of `names.py`/`_recover_untranslated`
+  exists), Sugoi V4 (license forbids commercial use), OPUS-MT (Apache-2.0 — too weak),
+  FuguMT (CC-BY-SA), NLLB-200 / Aya / TowerInstruct (**CC-BY-NC — non-commercial**),
+  and **Gemma / Llama** (their *use policies* restrict adult content and survive
+  redistribution — a non-starter for this app's material; Apache-2.0 has no
+  field-of-use terms). The model is **bundled and loaded from a local directory**
+  (`models/qwen/`, override with `NIHONGOVIEWER_QWEN_DIR=<path>`) — **no
+  `huggingface_hub` at runtime**. Trade-off: ~4 GB int8 on disk (CTranslate2 has no
+  int4 on CPU — only `int8`, `int8_float32`, `float32`) and a slower per-line
+  generation than MADLAD, largely hidden by the fuzzy cache.
 
 Both ML models are **bundled** and loaded from local directories (OCR from
-`ocr/models/`, MADLAD from `models/madlad/`) — nothing is fetched from Hugging Face
-at runtime. The large MADLAD model (~3 GB) is **not** committed to git (it's copied
+`ocr/models/`, Qwen3 from `models/qwen/`) — nothing is fetched from Hugging Face
+at runtime. The large Qwen3 model (~4 GB) is **not** committed to git (it's copied
 into the build/depot); the small Apache-2.0 OCR ONNX under `ocr/models/` **is**
 committed. Keep model *loading* path-based, not `huggingface_hub`-based.
 
@@ -158,7 +167,7 @@ repo does **not** match it yet:
 |--------|-------------------|------------------|
 | UI toolkit | PySide6 (Qt) | **pywebview + HTML/CSS/JS** (`ui/`) |
 | Screen capture | `mss` (cross-platform) | **Windows Graphics Capture** (`windows-capture`) — per-window, no game disturbance; window enum/geometry still Win32 |
-| Pipeline | 4 stages wired | **All 4 wired**: Capture + OCR (RapidOCR) + MADLAD-400 translation (fuzzy-cached) + in-place overlay |
+| Pipeline | 4 stages wired | **All 4 wired**: Capture + OCR (RapidOCR) + Qwen3-4B translation (fuzzy-cached) + in-place overlay |
 | Layout | 3-panel Qt grid | Single HTML page |
 
 The pywebview shell cannot provide the per-pixel-transparent, click-through overlay the
@@ -186,8 +195,8 @@ NihongoViewer/
     __init__.py               #   create_engine() factory + registry
   translate/                  # Translation stage — backends behind a common ABC
     base.py                   #   Translator ABC (load / translate)
-    madlad.py                 #   MADLAD-400-3B (the only backend; int8 CT2, torch-free)
-    segment.py                #   sentence split + has-Japanese test (pre-translate)
+    qwen.py                   #   Qwen3-4B (the only backend; int8 CT2, torch-free)
+    segment.py                #   has-Japanese test (pre-translate)
     names.py                  #   romanize proper-noun katakana (ヤツシロ->Yatsushiro)
     furigana.py               #   kana readings over kanji (天気->天気(てんき)); tokens() for Read Mode
     dictionary.py             #   offline JMdict index (Read Mode hover lookup; SQLite, CC BY-SA)
@@ -221,7 +230,8 @@ py -m venv .venv
 
 - Keep the 4 pipeline stages decoupled and each independently swappable behind its ABC.
 - Prefer live-applying setting changes; treat "restart required" as a last resort.
-- **No PyTorch.** The whole toolchain is torch-free (PaddleOCR/RapidOCR is ONNX, MADLAD is CT2);
+- **No PyTorch at runtime.** The shipped toolchain is torch-free (PaddleOCR/RapidOCR is ONNX,
+  Qwen3 is CT2); torch is allowed *offline on the build machine* only, to produce the CT2 export;
   keep it that way so the commercial Steam build stays clean of torch's licensing/size.
 - No runtime network calls. Both ML models are bundled/local (no `huggingface_hub`);
   the only optional download is the JMdict dictionary (~11 MB, stdlib `urllib`).

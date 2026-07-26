@@ -2,7 +2,7 @@
 
 Read Mode lets a learner hover any word in a captured sentence and see its
 reading, part of speech, and English senses — the "deep dive" half of the
-capture -> card flow. That needs a real dictionary, not the MT model: MADLAD
+capture -> card flow. That needs a real dictionary, not the MT model: the model
 gives one fluent gloss, but a learner wants the dictionary form, the readings,
 and every sense. JMdict is that dictionary.
 

@@ -487,11 +487,11 @@
     if (stackIndex >= 0 && stackLoadedIndex !== stackIndex) loadStackIntoForm();
   });
 
-  // --- Translate a field with MADLAD-400 (offline) ---
+  // --- Translate a field with Qwen3-4B (offline) ---
   // Re-translates the JA source (Word / Sentence) into its EN field, so a user
   // who edits the captured text can refresh the translation.
   // `word: true` uses the word-gloss path (translate_word), which avoids the
-  // padded sentence MADLAD returns for a bare word ("学生" -> "Students are
+  // padded sentence a sentence-MT model returns for a bare word ("学生" -> "Students are
   // students."). The Sentence field uses the plain sentence translator.
   async function translateField(srcEl, dstEl, btn, opts = {}) {
     // Status messages go to the caller's hint area (Create-card by default, or the
@@ -503,7 +503,7 @@
       return;
     }
     if (!api()) {
-      hint("Translation needs the app running (MADLAD-400).", "err");
+      hint("Translation needs the app running (Qwen3-4B).", "err");
       return;
     }
     const labelEl = btn.querySelector(".mini-label");

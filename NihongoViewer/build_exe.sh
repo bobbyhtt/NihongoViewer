@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Steam / Option A build for Yakutori (commercial-safe: PaddleOCR/RapidOCR + MADLAD).
+# Steam / Option A build for Yakutori (commercial-safe: PaddleOCR/RapidOCR + Qwen3).
 # Produces a FOLDER build at build/main.dist/ (NOT onefile — Steam ships folders,
 # and onefile would re-extract the bundled models to temp on every launch).
 # Model weights are shipped locally (no Hugging Face at runtime): the OCR ONNX is
-# bundled via --include-data-dir below, and the MADLAD CTranslate2 model is copied
-# into build/main.dist/models/madlad/ as a post-build step (it's ~3 GB, so it's
+# bundled via --include-data-dir below, and the Qwen3-4B CTranslate2 model is copied
+# into build/main.dist/models/qwen/ as a post-build step (it's ~4 GB, so it's
 # copied into the dist rather than run through Nuitka). The app then runs fully
 # offline with no first-run download.
+# NOTE: ctranslate2's wheel bundles cudnn64_9.dll (NVIDIA, proprietary) for the GPU
+# path. We are CPU-only, so delete it from build/main.dist/ctranslate2/ — it drops
+# an NVIDIA redistribution obligation we don't need.
 # NOTE: unidic_lite needs --include-package-data (not just --include-package) — the
 # module alone is useless without its dicdir payload, and fugashi.Tagger() then fails
 # behind a guarded import, silently disabling name protection + furigana/Read Mode.
@@ -36,7 +39,8 @@ cd "C:/Users/bobby/Documents/NihongoViewer/NihongoViewer" || exit 1
   --include-package=ctranslate2 \
   --include-package=rapidocr_onnxruntime \
   --include-package-data=rapidocr_onnxruntime \
-  --include-package=sentencepiece \
+  --include-package=tokenizers \
+  --include-package-data=tokenizers \
   --include-package=fugashi \
   --include-package=unidic_lite \
   --include-package-data=unidic_lite \

@@ -11,11 +11,11 @@ from .cache import FuzzyCache
 # name -> "module:ClassName" (kept as strings so `import translate` stays cheap;
 # ctranslate2 is only imported when a backend is actually created).
 _BACKENDS = {
-    "MADLAD-400": ("madlad", "MadladTranslator"),  # default — most fluent (Apache-2.0)
+    "Qwen3-4B": ("qwen", "QwenTranslator"),  # only backend — Apache-2.0, torch-free
 }
 
 #: Translation backend used by default.
-DEFAULT_BACKEND = "MADLAD-400"
+DEFAULT_BACKEND = "Qwen3-4B"
 
 
 def available_backends() -> list[str]:

@@ -26,14 +26,16 @@ shapely>=2.0              # rapidocr DB detection post-processing
 PyYAML>=6.0               # rapidocr config
 six>=1.16                # rapidocr
 
-# Translation — MADLAD-400-3B (Apache-2.0, commercial-safe) JA->EN, run via
-# CTranslate2 + SentencePiece. Uses a ready-made int8 CTranslate2 export (no torch
-# conversion). The model is BUNDLED and loaded from a local dir (models/madlad/, or
-# $NIHONGOVIEWER_MADLAD_DIR) — no huggingface_hub, no runtime download. Inference is
-# torch-free. Populate models/madlad/ with the CT2 files (model.bin, config.json,
-# shared_vocabulary.json, spiece.model) at build time.
+# Translation — Qwen3-4B (Apache-2.0, commercial-safe) JA->EN, run via CTranslate2's
+# decoder-only `Generator` + the HF `tokenizers` byte-level BPE. Inference is
+# torch-free; torch/transformers are only needed OFFLINE on the build machine to
+# produce the CT2 export, and are never shipped. The model is BUNDLED and loaded
+# from a local dir (models/qwen/, or $NIHONGOVIEWER_QWEN_DIR) — no huggingface_hub,
+# no runtime download. Populate models/qwen/ with the CT2 files (model.bin,
+# config.json, vocabulary.json) plus Qwen's tokenizer.json at build time.
+# (Replaced MADLAD-400-3B, which needed sentencepiece; that dependency is gone.)
 ctranslate2>=4.0
-sentencepiece>=0.2.0
+tokenizers>=0.20
 
 # Name protection — romanize proper-noun katakana (ヤツシロ -> Yatsushiro) so the MT
 # model doesn't mistranslate names. fugashi+unidic-lite tag proper nouns; jaconv

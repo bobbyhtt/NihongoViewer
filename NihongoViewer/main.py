@@ -26,7 +26,7 @@ import translate
 from translate import dictionary, furigana
 
 # Both ML models are loaded from local directories bundled with the app — the
-# MADLAD translation model from `models/madlad/` (see translate.madlad) and the
+# Qwen3 translation model from `models/qwen/` (see translate.qwen) and the
 # OCR weights from `ocr/models/` — so nothing is fetched from Hugging Face at
 # runtime (no huggingface_hub dependency). The only optional runtime download is
 # the JMdict Read-Mode dictionary (~11 MB via stdlib urllib), and it's bundleable
@@ -92,6 +92,29 @@ class Api:
         self._card_hotkey = hotkey.HotkeyManager(self._capture_card_hotkey)
         self._card_hotkey.set_hotkey(self._settings["card_hotkey"])
 
+    #: Settings that change WHAT gets captured. Changing one invalidates the
+    #: tiered skip state — see `_reset_frame_cache_locked`.
+    _SOURCE_KEYS = ("capture_mode", "detect_area")
+
+    def _reset_frame_cache_locked(self) -> None:
+        """Forget the last frame/text so the next frame is processed in full.
+
+        `process_frame` skips work in two tiers — Tier 0 compares a hash of the
+        captured pixels, Tier 2 compares the OCR'd text — and both references
+        used to outlive a change of capture *source*. Switching Screen -> Area
+        (or moving the detect box) mid-capture therefore left the text screen
+        mode had just read sitting in `_last_ocr_text`; the first area frame read
+        the same on-screen text, matched Tier 2, and returned "unchanged", so
+        nothing was drawn and the Text panel never updated — area mode looked
+        like it simply couldn't see the text. Tier 0 can collide the same way:
+        `frame_signature` rescales to a fixed square, so a window frame and a
+        crop of it are directly comparable.
+
+        Caller must hold `self._lock`.
+        """
+        self._last_frame_sig = None
+        self._last_ocr_text = None
+
     # -- window capture -------------------------------------------------------
     def list_windows(self) -> list[dict]:
         return capture.list_windows()
@@ -111,8 +134,7 @@ class Api:
             self._overlay_enabled = True
             # Fresh session: forget the last frame/text so the first frame is
             # always processed (never skipped as "unchanged" from a prior run).
-            self._last_frame_sig = None
-            self._last_ocr_text = None
+            self._reset_frame_cache_locked()
         # Report the state so the UI's overlay toggle starts in sync ("Shown").
         return {"ok": True, "overlay_visible": True}
 
@@ -124,8 +146,7 @@ class Api:
         with self._lock:
             self._capturing = False
             self._hide_overlay_locked()
-            self._last_frame_sig = None
-            self._last_ocr_text = None
+            self._reset_frame_cache_locked()
         capture.stop_capture_session()  # release the WGC capture
         return {"ok": True}
 
@@ -178,6 +199,9 @@ class Api:
             self._settings["capture_mode"] = "area"
             self._settings["detect_area"] = result["detect_area"]
             self._settings["translate_area"] = result["translate_area"]
+            # New boxes = a new source; the old frame/text references no longer
+            # describe what we're about to capture.
+            self._reset_frame_cache_locked()
             config.save(self._settings)
         return {"ok": True, **result}
 
@@ -232,7 +256,7 @@ class Api:
         return {"ok": True, "backend": translator.name}
 
     def translate_text(self, text: str) -> dict:
-        """Translate one JA string to EN with MADLAD-400 (offline, fuzzy-cached).
+        """Translate one JA string to EN with Qwen3-4B (offline, fuzzy-cached).
 
         Used by the Create-card "Translate" buttons so a user who edits the
         captured word/sentence can re-translate it. Returns {ok, text} or an
@@ -256,7 +280,7 @@ class Api:
 
         Same backend as `translate_text`, but via `Translator.translate_word`,
         which coaxes a short dictionary-style rendering instead of the padded
-        sentence MADLAD emits for a bare word ("学生" -> "Students", not "Students
+        sentence a sentence-MT model emits for a bare word ("学生" -> "Students", not "Students
         are students."). Returns {ok, text} or an error.
         """
         text = (text or "").strip()
@@ -508,6 +532,11 @@ class Api:
         new_hotkey = patch.pop("hotkey", None)
         new_card_hotkey = patch.pop("card_hotkey", None)
         with self._lock:
+            # The Screen/Area toggle arrives here like any other setting, so this
+            # is where a live source switch has to drop the tiered skip state.
+            if any(k in patch and patch[k] != self._settings.get(k)
+                   for k in self._SOURCE_KEYS):
+                self._reset_frame_cache_locked()
             self._settings.update(patch)
 
         hotkey_result = self._rebind_hotkey(self._hotkey, "hotkey", new_hotkey)
@@ -644,7 +673,14 @@ class Api:
 
         # Area mode grabs raw screen pixels inside the detect box (no window needed)
         # and draws the combined translation in the translate box — a separate path.
-        if mode == "area" and detect_area and translate_area:
+        if mode == "area":
+            # Both boxes are required. Without them we used to fall through to the
+            # screen path, which in area mode has no window selected (hwnd 0): the
+            # capture failed, and the "window was closed" branch below stopped the
+            # capture outright. Area mode looked like it just couldn't see any text.
+            if not (detect_area and translate_area):
+                return {"ok": False, "error": "Area mode needs its boxes — "
+                                              "click Configure Area to place them."}
             return self._process_area(engine, translator, style, text_mode,
                                       detect_area, translate_area)
 
@@ -850,6 +886,10 @@ class Api:
                 self._draw_overlay(self._last_hwnd, self._last_pairs, style, text_mode)
             elif self._last_area_draw:  # area mode — one box in the translate area
                 ja, en, area = self._last_area_draw
+                # Prefer the CURRENT translate box: dragging it in the area editor
+                # should move what's already on screen, and the next capture tick
+                # may never come (the tier checks skip an unchanged screen).
+                area = self._settings["translate_area"] or area
                 self._draw_area_overlay(ja, en, area, style, text_mode)
 
     @staticmethod
@@ -940,6 +980,13 @@ class Api:
 
 def main() -> None:
     api = Api()
+    # One startup line to the overlay log so its mere existence confirms THIS
+    # build is the one running (independent of whether the overlay has drawn yet).
+    try:
+        import overlay
+        overlay._debug("Yakutori started")
+    except Exception:
+        pass
     window = webview.create_window(
         title="Yakutori",
         url=str(INDEX_HTML),

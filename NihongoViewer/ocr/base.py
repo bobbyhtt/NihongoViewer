@@ -15,8 +15,10 @@ Box = tuple[int, int, int, int]
 
 # Speed/quality presets the user picks in "Configure OCR". Each engine maps these
 # to its own knobs (see `apply_speed`); the names and order are the UI's source of
-# truth. "balanced" is the default — a little faster than "accurate" with a small
-# accuracy cost; "fast" trades more accuracy for the least CPU/latency.
+# truth. "balanced" is the default — "fast" (least upscale) is quicker but its
+# detector drops whole low-contrast/short lines (measured ~10% miss on a VN
+# backlog), which is worse than a little latency for a translator; "accurate"
+# upscales more for a marginal gain at noticeably more CPU.
 SPEED_PRESETS = ("fast", "balanced", "accurate")
 DEFAULT_SPEED = "balanced"
 

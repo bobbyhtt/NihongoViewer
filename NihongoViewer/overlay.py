@@ -27,6 +27,24 @@ from PIL import Image, ImageDraw, ImageFont
 # Fonts bundled with the app (so they work without a system install).
 _FONTS_DIR = Path(__file__).parent / "fonts"
 
+
+def _debug(msg: str) -> None:
+    """Best-effort one-line log to a temp file — only the overlay FAILURE paths
+    write here, so if the overlay ever misbehaves again this file says exactly
+    what failed (CreateWindowEx / UpdateLayeredWindow) instead of us guessing.
+    Silent and non-fatal: logging must never take down the overlay.
+    """
+    try:
+        import os
+        import tempfile
+
+        line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} overlay: {msg}\n"
+        with open(os.path.join(tempfile.gettempdir(), "nihongoviewer_overlay.log"),
+                  "a", encoding="utf-8") as fh:
+            fh.write(line)
+    except Exception:
+        pass
+
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
 
@@ -113,6 +131,8 @@ gdi32.DeleteDC.argtypes = [wintypes.HDC]
 user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
 user32.IsWindow.restype = wintypes.BOOL
 user32.IsWindow.argtypes = [wintypes.HWND]
+user32.IsWindowVisible.restype = wintypes.BOOL
+user32.IsWindowVisible.argtypes = [wintypes.HWND]
 user32.SetWindowPos.restype = wintypes.BOOL
 user32.SetWindowPos.argtypes = [
     wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
@@ -388,6 +408,11 @@ class Overlay:
         leave the overlay gone for the whole session — draws would queue and
         no-op, and even the hide/show hotkey couldn't bring it back (only an app
         restart could). Recreating on demand makes the overlay self-heal.
+
+        Note: `IsWindow` catches a *destroyed* window, but a layered window can
+        also stop accepting `UpdateLayeredWindow` while its HWND still reports
+        valid (see `_draw`). That case is handled there by `_destroy_window`,
+        which nulls `_hwnd` so this method rebuilds it on the next draw.
         """
         if self._hwnd and user32.IsWindow(self._hwnd):
             return True
@@ -398,6 +423,22 @@ class Overlay:
         except Exception:
             self._hwnd = None
         return bool(self._hwnd)
+
+    def _destroy_window(self) -> None:
+        """Destroy the overlay window and forget it (call on the overlay thread).
+
+        Used when a draw fails on a still-`IsWindow`-valid HWND: nulling `_hwnd`
+        makes `_ensure_hwnd` build a fresh window on the next draw instead of
+        forever retrying a dead one — the fix for "overlay gone until restart".
+        """
+        hwnd, self._hwnd, self._visible = self._hwnd, None, False
+        if hwnd:
+            try:
+                import win32gui
+
+                win32gui.DestroyWindow(hwnd)
+            except Exception:
+                pass
 
     def _run(self) -> None:
         try:
@@ -457,11 +498,15 @@ class Overlay:
             ex_style, self._CLASS_NAME, "NihongoViewer Overlay", WS_POPUP,
             0, 0, 0, 0, 0, 0, 0, None,
         )
+        if not self._hwnd:
+            _debug("CreateWindowEx failed")
+            return  # _ensure_hwnd sees a falsy _hwnd and retries next draw
         # Assert topmost once here rather than on every frame. Re-poking the
         # z-order each draw churns the window band and can make a windowed
         # DirectX game re-present (a black flash); WS_EX_TOPMOST keeps us on top.
         user32.SetWindowPos(self._hwnd, ctypes.c_void_p(HWND_TOPMOST), 0, 0, 0, 0,
                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+        _debug(f"overlay window created (hwnd={self._hwnd})")
         # Note: no SetWindowDisplayAffinity needed. WGC captures only the target
         # game window's own surface, so this separate overlay window is never in
         # the capture — and it stays visible in the user's screen recordings.
@@ -511,13 +556,36 @@ class Overlay:
             size = wintypes.SIZE(w, h)
             # Update the layered content (position, size and pixels atomically) FIRST,
             # then reveal the window — so it never briefly shows stale/empty content.
-            user32.UpdateLayeredWindow(
+            ok = user32.UpdateLayeredWindow(
                 self._hwnd, screen_dc, ctypes.byref(pt_dst), ctypes.byref(size),
                 mem_dc, ctypes.byref(pt_src), 0, ctypes.byref(blend), ULW_ALPHA,
             )
-            if not self._visible:
+            if not ok:
+                # The layered window went bad while its HWND still reports valid —
+                # a display-mode / DWM change (e.g. a game toggling a backlog or
+                # fullscreen) can do this. `IsWindow` stays true, so `_ensure_hwnd`
+                # would never rebuild it and the overlay would be gone until the app
+                # restarts. Tear it down here so the next draw builds a fresh one;
+                # the following capture tick (or the hide/show hotkey) then restores
+                # the overlay on its own.
+                _debug("UpdateLayeredWindow failed — rebuilding overlay window")
+                self._destroy_window()
+                return
+            # Make sure the window is actually on screen. A cached `_visible` flag
+            # isn't enough: a display-mode / fullscreen switch can HIDE our topmost
+            # window without going through our own hide path, leaving `_visible`
+            # stuck True. UpdateLayeredWindow keeps succeeding (so nothing is
+            # logged), yet the overlay is invisible until restart — the other
+            # "overlay gone forever" cause. Check the real window state every draw
+            # and re-show (and re-assert topmost) if it was hidden out from under us.
+            if not user32.IsWindowVisible(self._hwnd):
+                if self._visible:
+                    _debug("overlay was hidden externally — re-showing")
                 user32.ShowWindow(self._hwnd, SW_SHOWNOACTIVATE)
-                self._visible = True
+                user32.SetWindowPos(
+                    self._hwnd, ctypes.c_void_p(HWND_TOPMOST), 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+            self._visible = True
         finally:
             if old:
                 gdi32.SelectObject(mem_dc, old)

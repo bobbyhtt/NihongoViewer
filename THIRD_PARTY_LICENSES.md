@@ -28,7 +28,10 @@ a component's own license.
 | PyYAML | ≥6.0 | MIT | rapidocr configuration parsing |
 | six | ≥1.16 | MIT | rapidocr compatibility shim |
 | ctranslate2 | ≥4.0 | MIT | Translation inference runtime |
-| sentencepiece | ≥0.2.0 | Apache-2.0 | Tokenizer |
+| ↳ oneDNN (statically linked into `ctranslate2.dll`) | bundled | Apache-2.0 | CPU inference kernels |
+| ↳ Intel oneAPI MKL (statically linked into `ctranslate2.dll`) | bundled | Intel Simplified Software License — binary redistribution permitted royalty-free | BLAS kernels |
+| ↳ Intel OpenMP runtime (`ctranslate2/libiomp5md.dll`) | bundled | Intel Simplified Software License — binary redistribution permitted royalty-free | Thread pool |
+| tokenizers | ≥0.20 | Apache-2.0 | Byte-level BPE tokenizer (Qwen3) |
 | fugashi | ≥1.3 | MIT | MeCab wrapper |
 | unidic-lite | ≥1.0.8 | MIT / WTFPL; bundles UniDic 2.1.2 data (© UniDic Consortium), released under the GPL, the LGPL, or the BSD License at the licensee's option — Yakutori elects the **BSD License** | Japanese morphological dictionary |
 | jaconv | ≥0.3 | MIT | Kana ↔ romaji conversion |
@@ -57,7 +60,7 @@ All bundled fonts are licensed under the **SIL Open Font License, Version 1.1**
 
 | Model | Origin | License | Role |
 |---|---|---|---|
-| MADLAD-400-3B MT (int8 CTranslate2 export) | `Nextcloud-AI/madlad400-3b-mt-ct2-int8`, from Google `google/madlad400-3b-mt` | Apache-2.0 | Translation |
+| Qwen3-4B (int8 CTranslate2 export) | `Qwen/Qwen3-4B` (Alibaba Cloud), converted to CTranslate2 | Apache-2.0 | Translation |
 | PP-OCRv5 mobile recognition (`ocr/models/japan_ppocrv5_rec.onnx`) | PaddleOCR `PP-OCRv5_mobile_rec`, converted to ONNX (`ilaylow/PP_OCRv5_mobile_onnx`); character dictionary from PaddleOCR `ppocrv5_dict.txt` | Apache-2.0 | OCR recognition |
 | PP-OCR text-detection and angle-classification | Included in the `rapidocr-onnxruntime` package | Apache-2.0 | OCR detection |
 

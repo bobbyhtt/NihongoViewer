@@ -57,6 +57,27 @@ _REC_IMG_SHAPE = [3, 48, 320]
 # Bundled Apache-2.0 Japanese recognition model (PP-OCRv5; dict baked into ONNX).
 _REC_MODEL = Path(__file__).resolve().parent / "models" / "japan_ppocrv5_rec.onnx"
 
+# A wide, short capture makes RapidOCR's text DETECTOR misbehave in two ways, and
+# both drop or garble the text:
+#
+#   * Above ~8:1, RapidOCR skips detection outright (its `width_height_ratio`
+#     config), feeding the whole strip to the recognizer as one squashed line.
+#   * Well BELOW that — from ~2.5:1 up — the DB detector still runs but fragments
+#     a single line into several out-of-order pieces and drops parts of it
+#     (measured: "ついていってあげようか?」" → "てあげ。 | うか?」"). This is the real
+#     cause of "a line with a 」 / ？」 ending won't detect" and of Area-mode /
+#     thin-window misses: the trigger is the aspect ratio, not the punctuation.
+#
+# The detector wants text to be a modest fraction of the frame height; when text
+# fills a short strip it breaks up. So we letterbox any over-wide capture down to
+# ~2:1 (empirically the point where a filled line reads whole again — 3:1 still
+# fragments, 2:1 is clean), then shift the boxes back. A normal game window is
+# ~1.3–1.8:1, safely under the trigger, so full-frame Screen captures are never
+# touched. On the >8:1 no-detection path RapidOCR also returns one box spanning
+# the whole image, so this keeps grouping/overlay placement meaningful too.
+_DETECT_MAX_RATIO = 2.5      # letterbox any capture wider than this
+_DETECT_TARGET_RATIO = 2.0   # ...down to ~2:1, where a filled line reads whole
+
 # Speed/quality knob: a pre-OCR upscale factor. More pixels
 # help the detector find small/low-contrast game glyphs at the cost of latency
 # (boxes are mapped back to source pixels afterwards). Pure per-frame knob — no
@@ -131,6 +152,9 @@ class PaddleEngine(OcrEngine):
     def recognize(self, image: Image.Image) -> OcrResult:
         self.load()
         image = image.convert("RGB")
+        # A wide, short grab (an Area-mode detect box) would otherwise skip
+        # detection entirely — see _DETECT_MAX_RATIO. No-op for normal frames.
+        image, pad_top = _letterbox(image)
         scale = self._scale_for(image.width, image.height)
         src = image
         if scale != 1.0:
@@ -154,7 +178,7 @@ class PaddleEngine(OcrEngine):
                 continue
             if _to_float(score) < self._min_confidence:
                 continue
-            regions.append(OcrRegion(text=text, box=_quad_box(quad, scale)))
+            regions.append(OcrRegion(text=text, box=_quad_box(quad, scale, pad_top)))
         return OcrResult(regions=regions)
 
 
@@ -166,11 +190,39 @@ def _to_float(score) -> float:
         return 1.0
 
 
-def _quad_box(quad, scale: float = 1.0):
+def _letterbox(image: Image.Image) -> tuple[Image.Image, int]:
+    """Pad an over-wide image vertically so RapidOCR still runs detection.
+
+    Returns `(image, y_offset)` — the offset is how far the original content was
+    pushed down, so boxes can be mapped back. Images already inside
+    `_DETECT_MAX_RATIO` are returned untouched with offset 0.
+
+    The bands replicate the top and bottom edge rows rather than adding a flat
+    colour, so we don't hand the detector an artificial high-contrast border to
+    latch onto. See `_DETECT_MAX_RATIO` for why this is needed at all.
+    """
+    width, height = image.width, image.height
+    if height <= 0 or width / height <= _DETECT_MAX_RATIO:
+        return image, 0
+    target = int(round(width / _DETECT_TARGET_RATIO))
+    top = (target - height) // 2
+    bottom = target - height - top
+    canvas = Image.new("RGB", (width, target))
+    if top > 0:
+        canvas.paste(image.crop((0, 0, width, 1)).resize((width, top)), (0, 0))
+    if bottom > 0:
+        canvas.paste(image.crop((0, height - 1, width, height)).resize((width, bottom)),
+                     (0, top + height))
+    canvas.paste(image, (0, top))
+    return canvas, top
+
+
+def _quad_box(quad, scale: float = 1.0, y_offset: int = 0):
     """RapidOCR's 4-point polygon -> axis-aligned (x0, y0, x1, y1) in source px.
 
     `scale` is the pre-OCR upscale factor; coords are divided by it so boxes map
     back to the original (un-upscaled) image the caller positions against.
+    `y_offset` undoes any letterbox padding (see `_letterbox`).
     """
     if not quad:
         return None
@@ -178,7 +230,7 @@ def _quad_box(quad, scale: float = 1.0):
     ys = [p[1] for p in quad]
     return (
         int(min(xs) / scale),
-        int(min(ys) / scale),
+        int(min(ys) / scale) - y_offset,
         int(max(xs) / scale),
-        int(max(ys) / scale),
+        int(max(ys) / scale) - y_offset,
     )
