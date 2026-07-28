@@ -49,6 +49,15 @@ _PROPER_NOUN = "固有名詞"
 _PERSON_NAME = "人名"
 _HAS_KANJI = re.compile(r"[一-鿿々〆ヶ]")
 
+# Honorific suffixes that mark the PRECEDING token as a person's name. UniDic
+# often mis-tags a surname as a place (仁木 -> 地名) or can't parse an invented name
+# at all, but "<X>君 / <X>さん / <X>ちゃん …" is unambiguously a person, so a proper
+# noun or unknown kanji token sitting right before one of these is romanized as a
+# name too. Common nouns are deliberately NOT eligible, so "店員さん" stays "clerk"
+# and "神様" stays "god" rather than becoming "Tenin"/"Kami".
+_NAME_HONORIFICS = {"君", "くん", "さん", "ちゃん", "様", "さま", "氏", "殿",
+                    "先生", "先輩", "先パイ", "せんぱい"}
+
 # Hiragana okurigana that can trail a katakana verb/adjective stem, and the POS
 # tags of an inflected word — used to spot a katakana run that is really a stylized
 # verb (シゴいて = しごいて), which the model otherwise reads as a name ("Shigo").
@@ -247,20 +256,38 @@ def _romanize_kanji_names(text: str) -> str:
     A general MT model can't translate a kanji name and just drops it (香純 -> "")
     or hallucinates one. When the analyzer tags a kanji token as a *person* proper
     noun it also hands us the reading, so we romanize that and the name survives.
+
+    Two cases are treated as a person name:
+      * ``固有名詞・人名`` — the analyzer is sure (久夫 -> Hisao);
+      * a proper noun the analyzer mis-typed as a place (仁木 -> 地名) OR an unknown
+        kanji token, when it sits immediately before a name honorific (仁木**君**,
+        <name>**さん**). The honorific is what disambiguates it from a real place
+        (東京 alone is left for the model). Common nouns are never eligible even
+        with an honorific, so 店員さん stays "clerk".
     """
     tagger = _get_tagger()
     if tagger is None:
         return text
+    toks = list(tagger(text))
     repl: dict[str, str] = {}
-    for tok in tagger(text):
+    for i, tok in enumerate(toks):
         surf = tok.surface
         if surf in repl or not _HAS_KANJI.search(surf):
             continue
         feat = tok.feature
-        if (getattr(feat, "pos2", None) == _PROPER_NOUN
-                and getattr(feat, "pos3", None) == _PERSON_NAME):
+        is_proper = getattr(feat, "pos2", None) == _PROPER_NOUN
+        is_person = is_proper and getattr(feat, "pos3", None) == _PERSON_NAME
+        # A proper noun (any subtype) or unknown token right before an honorific is
+        # a person's name being addressed — romanize it even if UniDic guessed a
+        # place or couldn't parse it.
+        before_honorific = (
+            (is_proper or getattr(tok, "is_unk", False))
+            and i + 1 < len(toks)
+            and toks[i + 1].surface in _NAME_HONORIFICS
+        )
+        if is_person or before_honorific:
             reading = getattr(feat, "kana", None) or getattr(feat, "pron", None)
-            if reading:
+            if reading and reading != "*":
                 repl[surf] = _romaji(reading)
     for surf, rom in repl.items():
         text = text.replace(surf, rom)

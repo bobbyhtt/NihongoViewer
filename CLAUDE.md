@@ -38,10 +38,17 @@ Screen Capture -> OCR -> Translation -> Display
    (`ヤツシロ` → `Yatsushiro`, not "you bitch"; loanwords like `コーヒー` are left alone),
    and a **furigana** term `漢字(かな)` is replaced by its romanized reading
    (`鬼戮(きりく)` → `Kiriku`) instead of the model echoing the untranslatable kanji, both
-   with a user `names.json` override in the config dir. The whole line goes to the
-   model as **one unit** — the old per-sentence splitting was a MADLAD workaround
-   (it dropped clauses); Qwen3 translates better with the surrounding sentences
-   visible. Lines with no Japanese left (an already-romanized name plate) skip the
+   with a user `names.json` override in the config dir. Each **sentence** is a
+   translation-and-cache unit (`cache.SentenceCache`, splitting on `。！？` only —
+   never the `、` clause comma, so a sentence's clauses still reach the model
+   together). This is **not** the old MADLAD per-clause split (which dropped
+   clauses); it exists so an accumulating **NVL** narration screen (text that grows
+   one sentence per click) reuses the earlier sentences from the cache instead of
+   re-generating the whole paragraph every frame — otherwise a long block costs
+   ~100 s to regenerate *and* the block-level fuzzy match returns the shorter
+   previous block, silently dropping the newest sentence. A single-sentence line
+   (ordinary ADV dialogue) is one unit, unchanged. Lines with no Japanese left (an
+   already-romanized name plate) skip the
    model entirely. **JMdict assist** (see `dictionary.py`): a single *word* (the Create-card
    Word field) is glossed from JMdict first — the model romanizes rare/compound words
    it doesn't know (`足コキ` → "Foot Koki" vs JMdict's "footjob"); only non-headwords
@@ -134,9 +141,14 @@ cleanly.
   decoder-only `Generator` + `tokenizers` (byte-level BPE). **No torch at runtime**;
   torch/transformers are needed only *offline on the build machine* to produce the
   int8 CT2 export, and are never shipped. Two Qwen3 specifics: the prompt is ChatML
-  built by hand (no `transformers`/`jinja2` at runtime), and it must close the
-  `<think></think>` block immediately — Qwen3 reasons out loud by default, which
-  multiplies latency for no benefit here. The system prompt is passed as CT2's
+  built by hand (no `transformers`/`jinja2` at runtime), and it must suppress
+  Qwen3's reasoning two ways — Qwen3 reasons out loud by default, which multiplies
+  latency for no benefit here (one input, `いいよ`, generated ~360 reasoning tokens
+  ≈ 66 s on CPU before a one-word answer, and the reasoning sometimes leaked into
+  the output). The empty `<think></think>` block alone was NOT enough on some
+  inputs, so the user turn also carries Qwen3's `/no_think` soft switch (appended
+  after the text); that combination reliably drops the runaway to a normal call.
+  The system prompt is passed as CT2's
   `static_prompt` so its KV cache is reused across lines. Decode greedily
   (`sampling_topk=1`) so the fuzzy cache's "same source → same translation"
   assumption holds. Rejected alternatives: **MADLAD-400-3B** (Apache-2.0 — replaced;
@@ -200,7 +212,7 @@ NihongoViewer/
     names.py                  #   romanize proper-noun katakana (ヤツシロ->Yatsushiro)
     furigana.py               #   kana readings over kanji (天気->天気(てんき)); tokens() for Read Mode
     dictionary.py             #   offline JMdict index (Read Mode hover lookup; SQLite, CC BY-SA)
-    cache.py                  #   FuzzyCache — near-identical source reuse
+    cache.py                  #   FuzzyCache (near-identical reuse) + SentenceCache (per-sentence, for NVL)
     __init__.py               #   create_translator() factory (fuzzy-cached)
   overlay.py                  # Stage 4 — native Win32 per-pixel click-through overlay
   config.py                   # settings persistence (platformdirs JSON, load/save)

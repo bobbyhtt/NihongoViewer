@@ -36,7 +36,7 @@ from pathlib import Path
 
 from .base import Translator
 from .names import protect as protect_names
-from .segment import has_japanese
+from .segment import has_japanese, split_sentences as _split_sentences
 
 # The CTranslate2 export of Qwen/Qwen3-4B (Apache-2.0) is loaded from a LOCAL
 # directory bundled with the app (the Steam depot ships it) — no network and no
@@ -85,11 +85,19 @@ _SYSTEM = (
     "- If the line is a fragment, translate the fragment. Do not invent context."
 )
 
-# ChatML, built by hand (see the module docstring). The empty `<think></think>`
-# is Qwen3's "thinking disabled" form — without it the model reasons out loud
-# before answering and every line costs several times as much.
+# ChatML, built by hand (see the module docstring). Two belt-and-braces signals
+# turn Qwen3's reasoning OFF:
+#   * the empty `<think></think>` block (Qwen3's "thinking disabled" template form);
+#   * the `/no_think` soft switch appended to the user turn.
+# The empty block ALONE was not enough: for some inputs the model ignored it and
+# generated a full chain-of-thought in the answer anyway — e.g. "いいよ" produced
+# ~360 tokens of reasoning (~66 s on CPU) before the one-word answer, and the same
+# reasoning occasionally leaked into the output. Adding `/no_think` to the user
+# turn reliably suppresses it (66 s -> 0.7 s on that input), while `/no_think` in
+# the SYSTEM prompt did not. Placed after the text (not before) so it never reads
+# as part of the line to translate.
 _SYSTEM_PROMPT = f"<|im_start|>system\n{_SYSTEM}<|im_end|>\n"
-_PROMPT = ("<|im_start|>user\n{text}<|im_end|>\n"
+_PROMPT = ("<|im_start|>user\n{text} /no_think<|im_end|>\n"
            "<|im_start|>assistant\n<think>\n\n</think>\n\n")
 
 # Stop as soon as the assistant turn ends.
@@ -150,6 +158,131 @@ _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
 # instruction not to — only stripped when they enclose the entire output.
 _WRAPPED_QUOTES = re.compile(r'^\s*["“”「『\'](.*)["“”」』\']\s*$',
                              re.DOTALL)
+
+# Sentence splitting for the derail-recovery fallback (see `translate`) is shared
+# with SentenceCache — imported as `_split_sentences` from `translate.segment`.
+
+
+# Romanized-Japanese markers a correct English translation essentially never
+# contains and that are not names either — the copula / politeness / verb endings
+# of a line the model TRANSLITERATED instead of translating ("…suki desu ne",
+# "…maji de hataraku ssne"). Such output has no Japanese *script*, so the
+# residual-Japanese net (`_JP_SCRIPT`) misses it; these catch it instead. One hit
+# is enough — none of these is an English word. Pronouns/particles (kono, maji,
+# wa, no, are…) are deliberately excluded: they collide with English words or
+# names ("Kono" is a surname, "are"/"no"/"sore" are English), which would flag a
+# good translation. High precision is the priority — a derailment carried ONLY by
+# those slips through, but a correct line is never mistaken for romaji.
+_ROMAJI_MARKERS = frozenset({
+    "desu", "masu", "deshita", "mashita", "deshou", "darou", "daro",
+    "gozaimasu", "gozaimashita", "kudasai", "nandesu", "arigatou",
+    "sumimasen", "onegaishimasu", "ssne", "ssu", "ttsu",
+})
+_WORD_TOKEN = re.compile(r"[a-z]+")
+
+
+def _looks_romaji(text: str) -> bool:
+    """True if the output looks transliterated rather than translated.
+
+    Flags only on the high-precision markers above, so a normal English
+    translation is never mistaken for romaji (see `_ROMAJI_MARKERS`).
+    """
+    return any(tok in _ROMAJI_MARKERS for tok in _WORD_TOKEN.findall(text.lower()))
+
+
+# Ellipsis / hesitation marks — the fingerprint of broken, stammered VN speech
+# ("ん………う、ん!、下…………下…"). A normal grammatical sentence doesn't pepper these
+# between fragments, so their presence gates the more aggressive recovery below
+# (structural-romaji detection + 、-splitting) to exactly the lines it helps.
+_ELLIPSIS = re.compile(r"…|‥|\.{3,}|。{2,}")
+
+
+def _has_ellipsis(text: str) -> bool:
+    return bool(_ELLIPSIS.search(text))
+
+
+# A romaji WORD decomposes fully into Japanese syllables (including a sokuon
+# k/s/t/p). This is a *structural* romaji signal for output the markers miss
+# ("kashita", "wakaru", "deshino"). On its own it over-fires — several loanwords
+# and CV-shaped English words ("banana", "katana", "arena") decompose too — so it
+# is only ever consulted on ellipsis-laden broken speech (see `_derailed`), which
+# a normal banana/katana sentence is not.
+_ROMAJI_SYL = (
+    r"(?:kya|kyu|kyo|gya|gyu|gyo|sha|shu|sho|sya|syu|syo|jya|jyu|jyo|cha|chu|cho|"
+    r"nya|nyu|nyo|hya|hyu|hyo|bya|byu|byo|pya|pyu|pyo|mya|myu|myo|rya|ryu|ryo|"
+    r"shi|chi|tsu|ji|zi|fu|hu|si|ti|tu|di|du|[kgsztdnhbpmr][aiueo]|[wy][aiueo]|"
+    r"wo|n|[kstpc]|[aiueo])"
+)
+_ROMAJI_WORD = re.compile(r"^(?:" + _ROMAJI_SYL + r"){2,}$")
+
+
+def _looks_romaji_structural(text: str) -> bool:
+    """True if 2+ longish output words fully decompose into romaji syllables."""
+    hits = [t for t in _WORD_TOKEN.findall(text.lower())
+            if len(t) >= 5 and _ROMAJI_WORD.match(t)]
+    return len(hits) >= 2
+
+
+# The model occasionally breaks character and narrates its own reasoning, or echoes
+# the system-prompt rules, INTO the answer instead of just translating ("This is
+# the assistant's response… based on the rules provided, I need to output only the
+# English translation…", seen on 副校舎). The <think> stripping misses it because
+# it is in the answer, not a think block. These phrases essentially never occur in
+# a real VN line, so their presence marks a derailed, meta output. High precision
+# is the priority — every marker is a multi-word phrase a character would not say.
+_META_MARKERS = (
+    "the assistant's response", "based on the rules", "the user's line",
+    "i need to output only", "the correct translation of",
+    "translation of the japanese", "the japanese line", "the user wants",
+    "the user is asking", "as an ai language model", "i cannot translate",
+)
+
+
+def _looks_meta(text: str) -> bool:
+    """True if the output narrates the task / echoes the rules instead of translating."""
+    low = (text or "").lower()
+    return any(m in low for m in _META_MARKERS)
+
+
+def _derailed(source: str, out: str) -> bool:
+    """Whole-line output looks like a failure worth a split-retry (see `translate`).
+
+    Four signals, in rising order of how much they need gating: an empty output;
+    meta/rule-echo commentary (trusted on any line — see `_META_MARKERS`); a
+    high-precision romaji marker (trusted on any line); or the structural romaji
+    test — trusted ONLY on ellipsis-laden broken speech, where a correct English
+    translation (which has no such ellipses) can't be mistaken for it.
+    """
+    if not out.strip():
+        return True
+    if _looks_meta(out):
+        return True
+    if _looks_romaji(out):
+        return True
+    return _has_ellipsis(source) and _looks_romaji_structural(out)
+
+
+# The 、-fragment rejoin must gain at least this many letters over the whole-line
+# output to be worth taking — so it recovers a genuinely dropped fragment without
+# displacing a coherent line whose fragments merely read differently.
+_MIN_RECOVER = 4
+_LETTER = re.compile(r"[A-Za-z]")
+
+
+def _ascii_letters(text: str) -> int:
+    return sum(1 for c in text if c.isascii() and c.isalpha())
+
+
+def _has_gap(text: str) -> bool:
+    """True if the output has a comma-separated segment with no letters at all.
+
+    A silently dropped 、-fragment surfaces as "..., ... , ..." — the model keeps
+    the comma but renders the fragment as bare ellipsis. Distinct from an empty or
+    romaji output, so `_derailed` misses it; this catches it cheaply, without a
+    re-translation, so a plainly-complete line skips the fragment retry.
+    """
+    segs = [s for s in text.split(",") if s.strip()]
+    return len(segs) > 1 and any(not _LETTER.search(s) for s in segs)
 
 
 def _is_noise_fragment(text: str) -> bool:
@@ -309,6 +442,18 @@ class QwenTranslator(Translator):
         # strings would leave the byte markers in place.
         return _clean_output(self._tokenizer.decode(results[0].sequences_ids[0]))
 
+    def _translate_line(self, source: str) -> str:
+        """One model call on a whole source line + the residual-Japanese net.
+
+        `source` must already be name-protected and bracket-stripped. Residual
+        Japanese script means the model failed on this line, so we salvage what
+        the dictionary can (see `_recover_untranslated`).
+        """
+        out = _strip_brackets(self._generate(source))
+        if _JP_SCRIPT.search(out):
+            out = _recover_untranslated(out)
+        return out
+
     def translate(self, text: str) -> str:
         self.load()
         # Romanize name-like katakana and fix known-bad terms first (see
@@ -321,9 +466,65 @@ class QwenTranslator(Translator):
         # the model would only invent padding, so pass it straight through.
         if not has_japanese(source):
             return _normalize_punct(source)
-        out = _strip_brackets(self._generate(source))
-        # Residual Japanese script means the model failed on this line — salvage
-        # what the dictionary can (see _recover_untranslated).
-        if _JP_SCRIPT.search(out):
-            out = _recover_untranslated(out)
+        out = self._translate_line(source)
+        # Whole-line-with-context is the primary path (it reads best — see the
+        # module docstring). But a derailing line can make the model emit NOTHING,
+        # transliterate into romaji, or silently DROP a 、-fragment — taking the
+        # good parts down with it. When that happens, re-translate in pieces.
+        recovered = self._recover(source, out)
+        if recovered is not None:
+            out = recovered
+        # If the model rambled meta-commentary / rule-echo that recovery couldn't
+        # clear (greedy decoding makes a plain retry reproduce it, and a single
+        # sentence has nothing to split), drop the unit — a blank beats a paragraph
+        # of the model narrating itself on the overlay. SentenceCache means only
+        # the offending sentence is lost, not the whole line.
+        if _looks_meta(out):
+            return ""
         return _sentence_case(_normalize_punct(out))
+
+    def _recover(self, source: str, out: str) -> str | None:
+        """Re-translate a line the whole pass mishandled; None to keep `out`.
+
+        Broken, hesitant VN speech ("下…………下、わかる…でしょ………") derails as a whole —
+        the model emits nothing, transliterates into romaji, or silently drops a
+        、-fragment (only ellipsis for it) — yet each piece translates cleanly
+        alone. Two routes, in order:
+
+          1. **Sentence split (。！？)** — preferred when the line has real sentence
+             boundaries: it keeps clauses intact and never orphans a stutter comma
+             ("こ、こそ"). Taken for an empty/romaji whole pass, kept only if the
+             rejoin is itself clean.
+          2. **Per-、 fragments** — for broken speech route 1 can't split (no 。) or
+             didn't fix. Each pause-separated fragment is its own unit, rejoined
+             with ", ", and kept ONLY if it recovers materially more text than the
+             whole pass (`_MIN_RECOVER` more letters) — so a coherent line, whose
+             fragments read no fuller, is left as the whole-line version.
+
+        A normal sentence has no ellipsis (route 2 skips it) and no empty/romaji
+        failure (route 1 skips it), so its clauses are never chopped.
+        """
+        empty = not out.strip()
+        # Route 1 — sentence split for an empty/romaji whole pass.
+        if empty or _derailed(source, out):
+            parts = _split_sentences(source)
+            if len(parts) > 1:
+                joined = " ".join(
+                    p for p in (self._translate_line(s).strip() for s in parts) if p)
+                if joined and (empty or not _derailed(source, joined)):
+                    return joined
+        # Route 2 — per-、 fragments for broken speech, taken only when it recovers
+        # more content. The cheap gate (empty / derailed / a letter-less gap)
+        # spares a plainly-complete line the extra per-fragment calls.
+        if (_has_ellipsis(source) and "、" in source
+                and (empty or _derailed(source, out) or _has_gap(out))):
+            frags = [p for p in source.split("、") if p.strip()]
+            if len(frags) > 1:
+                # Drop a lone trailing period per fragment so ", " joining doesn't
+                # read "um., N!" — but keep an ellipsis, "!" or "?" (they carry tone).
+                trim = lambda s: s[:-1] if s.endswith(".") and not s.endswith("..") else s
+                joined = ", ".join(
+                    p for p in (trim(self._translate_line(f).strip()) for f in frags) if p)
+                if joined and _ascii_letters(joined) > _ascii_letters(out) + _MIN_RECOVER:
+                    return joined
+        return None

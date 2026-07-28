@@ -74,9 +74,16 @@ class Api:
         # static screen (or a cutscene with unchanged text) skip the expensive work.
         self._last_frame_sig = None
         self._last_ocr_text: str | None = None
-        # Area-mode last draw (ja, en, area) for live-restyle redraw; None in screen
-        # mode (which uses _last_pairs instead).
-        self._last_area_draw = None
+        # Area-mode per-area state, one slot per configured area (parallel to
+        # settings["areas"]): each {"sig", "text", "draw"} keeps that area's own
+        # tiered-skip references and its last (ja, en, translate_rect) draw, so the
+        # areas update independently and a live restyle can redraw them all. Empty
+        # in screen mode (which uses _last_pairs instead).
+        self._area_state: list = []
+        # Set by the "skip busy frame" hotkey; the pipeline checks it at each
+        # region/area boundary and abandons the rest of the in-progress frame so
+        # the current one is processed next (see _force_retranslate).
+        self._interrupt = threading.Event()
         self._lock = threading.Lock()
 
         # Global hide/show hotkey — works even when our window isn't focused.
@@ -92,9 +99,15 @@ class Api:
         self._card_hotkey = hotkey.HotkeyManager(self._capture_card_hotkey)
         self._card_hotkey.set_hotkey(self._settings["card_hotkey"])
 
+        # Third global hotkey: skip the frame currently being translated and force
+        # the CURRENT on-screen frame to be read next — for when the game has moved
+        # on while a slow translation of an older frame is still running.
+        self._retranslate_hotkey = hotkey.HotkeyManager(self._force_retranslate)
+        self._retranslate_hotkey.set_hotkey(self._settings["retranslate_hotkey"])
+
     #: Settings that change WHAT gets captured. Changing one invalidates the
     #: tiered skip state — see `_reset_frame_cache_locked`.
-    _SOURCE_KEYS = ("capture_mode", "detect_area")
+    _SOURCE_KEYS = ("capture_mode", "detect_area", "areas")
 
     def _reset_frame_cache_locked(self) -> None:
         """Forget the last frame/text so the next frame is processed in full.
@@ -114,6 +127,23 @@ class Api:
         """
         self._last_frame_sig = None
         self._last_ocr_text = None
+        # Drop the per-area state too, so a new/moved area set is processed fresh
+        # (and is re-sized to the new area count on the next tick).
+        self._area_state = []
+
+    def _area_pairs_locked(self) -> list:
+        """The valid area pairs from settings (each with both rects). Holds lock.
+
+        `areas` is the source of truth; fall back to the legacy single
+        detect_area/translate_area so a pre-multi-area config still works before it
+        is re-saved through the editor.
+        """
+        areas = self._settings.get("areas") or []
+        if not areas:
+            d, t = self._settings["detect_area"], self._settings["translate_area"]
+            if d and t:
+                areas = [{"detect": d, "translate": t}]
+        return [a for a in areas if a.get("detect") and a.get("translate")]
 
     # -- window capture -------------------------------------------------------
     def list_windows(self) -> list[dict]:
@@ -161,18 +191,19 @@ class Api:
         absolute screen px.
         """
         with self._lock:
-            detect = self._settings["detect_area"]
-            trans = self._settings["translate_area"]
-        if not detect or not trans:
+            areas = self._area_pairs_locked()
+        if not areas:
             import win32api
             import win32con
 
             sw = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
             sh = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
-            detect = detect or {"x": int(sw * 0.15), "y": int(sh * 0.60),
-                                "w": int(sw * 0.70), "h": int(sh * 0.20)}
-            trans = trans or {"x": int(sw * 0.15), "y": int(sh * 0.82),
-                              "w": int(sw * 0.70), "h": int(sh * 0.14)}
+            areas = [{
+                "detect": {"x": int(sw * 0.15), "y": int(sh * 0.60),
+                           "w": int(sw * 0.70), "h": int(sh * 0.20)},
+                "translate": {"x": int(sw * 0.15), "y": int(sh * 0.82),
+                              "w": int(sw * 0.70), "h": int(sh * 0.14)},
+            }]
 
         import area_editor  # imported lazily (Windows-only, native window)
         # Get our own window out of the way while the user drags the boxes, then
@@ -184,7 +215,7 @@ class Api:
             except Exception:
                 pass
         try:
-            result = area_editor.edit(detect, trans)
+            result = area_editor.edit(areas)
         except Exception as exc:
             return {"ok": False, "error": f"Couldn't open the area editor: {exc}"}
         finally:
@@ -195,15 +226,19 @@ class Api:
                     pass
         if result is None:
             return {"ok": True, "cancelled": True}
+        new_areas = result["areas"]
         with self._lock:
             self._settings["capture_mode"] = "area"
-            self._settings["detect_area"] = result["detect_area"]
-            self._settings["translate_area"] = result["translate_area"]
+            self._settings["areas"] = new_areas
+            # Mirror the primary area into the legacy keys (card-capture centering,
+            # backward compat) — `areas` stays the source of truth.
+            self._settings["detect_area"] = new_areas[0]["detect"]
+            self._settings["translate_area"] = new_areas[0]["translate"]
             # New boxes = a new source; the old frame/text references no longer
             # describe what we're about to capture.
             self._reset_frame_cache_locked()
             config.save(self._settings)
-        return {"ok": True, **result}
+        return {"ok": True, "areas": new_areas}
 
 
     # -- OCR stage ------------------------------------------------------------
@@ -531,6 +566,7 @@ class Api:
         # would be saved and leave the next launch with a dead hotkey.
         new_hotkey = patch.pop("hotkey", None)
         new_card_hotkey = patch.pop("card_hotkey", None)
+        new_retranslate_hotkey = patch.pop("retranslate_hotkey", None)
         with self._lock:
             # The Screen/Area toggle arrives here like any other setting, so this
             # is where a live source switch has to drop the tiered skip state.
@@ -542,6 +578,8 @@ class Api:
         hotkey_result = self._rebind_hotkey(self._hotkey, "hotkey", new_hotkey)
         card_hotkey_result = self._rebind_hotkey(
             self._card_hotkey, "card_hotkey", new_card_hotkey)
+        retranslate_hotkey_result = self._rebind_hotkey(
+            self._retranslate_hotkey, "retranslate_hotkey", new_retranslate_hotkey)
 
         with self._lock:
             config.save(self._settings)
@@ -556,6 +594,8 @@ class Api:
             result["hotkey"] = hotkey_result
         if card_hotkey_result is not None:
             result["card_hotkey"] = card_hotkey_result
+        if retranslate_hotkey_result is not None:
+            result["retranslate_hotkey"] = retranslate_hotkey_result
         return result
 
     def _rebind_hotkey(self, manager, key: str, new_spec):
@@ -657,32 +697,55 @@ class Api:
         except Exception:
             pass  # a failed UI poke must not kill the hotkey thread
 
+    def _force_retranslate(self) -> None:
+        """Skip the frame being translated and force the current one next.
+
+        Global-hotkey callback (runs off the UI thread). Raising the interrupt
+        flag makes the in-progress `process_frame` abandon its remaining regions /
+        areas at the next boundary; clearing the tiered-skip cache makes the next
+        tick re-read the CURRENT on-screen frame instead of skipping it as
+        "unchanged". A no-op when not capturing. Note: the ONE translation call
+        already running can't be cancelled (CTranslate2 has no interrupt) — it
+        finishes and its result is discarded; the win is skipping everything after
+        it and jumping to the current frame.
+        """
+        with self._lock:
+            if not self._capturing:
+                return
+            self._interrupt.set()
+            self._reset_frame_cache_locked()
+
     # -- the pipeline ---------------------------------------------------------
     def process_frame(self, hwnd) -> dict:
         """Capture -> OCR -> translate -> draw overlay. Returns {ja, en}."""
+        # Clear any stale "skip" flag up front: a press between ticks already reset
+        # the cache (so this run reads the current frame), and this fresh run must
+        # not abort itself on that leftover flag — only a press DURING this run,
+        # caught at a region/area boundary below, should interrupt it.
+        self._interrupt.clear()
         with self._lock:
             engine = self._engine
             translator = self._translator
             style = {k: self._settings[k] for k in config.STYLE_KEYS}
             text_mode = self._settings["text_mode"]
             mode = self._settings["capture_mode"]
-            detect_area = self._settings["detect_area"]
-            translate_area = self._settings["translate_area"]
+            areas = self._area_pairs_locked()
         if engine is None:
             return {"ok": False, "error": "OCR engine not ready"}
 
-        # Area mode grabs raw screen pixels inside the detect box (no window needed)
-        # and draws the combined translation in the translate box — a separate path.
+        # Area mode grabs raw screen pixels inside each detect box (no window
+        # needed) and draws each translation into its own translate box — a
+        # separate path that handles 1..4 independent areas.
         if mode == "area":
-            # Both boxes are required. Without them we used to fall through to the
-            # screen path, which in area mode has no window selected (hwnd 0): the
-            # capture failed, and the "window was closed" branch below stopped the
-            # capture outright. Area mode looked like it just couldn't see any text.
-            if not (detect_area and translate_area):
+            # At least one complete area is required. Without one we used to fall
+            # through to the screen path, which in area mode has no window selected
+            # (hwnd 0): the capture failed, and the "window was closed" branch below
+            # stopped the capture outright. Area mode looked like it simply couldn't
+            # see any text.
+            if not areas:
                 return {"ok": False, "error": "Area mode needs its boxes — "
                                               "click Configure Area to place them."}
-            return self._process_area(engine, translator, style, text_mode,
-                                      detect_area, translate_area)
+            return self._process_areas(engine, translator, style, text_mode, areas)
 
         # Screen mode: capture the whole target window.
         img = capture.capture_window_image(int(hwnd))
@@ -765,12 +828,17 @@ class Api:
         pairs: list = []
         try:
             for r in regions:
+                # "Skip busy frame" pressed mid-screen: abandon the remaining
+                # regions of this (now stale) frame without finalizing, so the next
+                # tick reads the current frame (the cache was reset by the hotkey).
+                if self._interrupt.is_set():
+                    return {"ok": True, "frame": frame, "interrupted": True}
                 pairs.append((r, translator.translate(r.text)))
                 with self._lock:
                     if not self._capturing:
                         return {"ok": True, "frame": frame, "ja": ja, "en": "", "stopped": True}
                     self._last_hwnd, self._last_pairs = int(hwnd), list(pairs)
-                    self._last_area_draw = None  # screen mode — not area mode
+                    self._area_state = []  # screen mode — drop any area draws
                     if self._overlay_enabled:
                         self._draw_overlay(int(hwnd), pairs, style, text_mode)
                     else:
@@ -782,67 +850,87 @@ class Api:
             self._last_ocr_text = ja  # Tier-2 reference — full screen now drawn
         return {"ok": True, "frame": frame, "ja": ja, "en": en}
 
-    def _process_area(self, engine, translator, style, text_mode,
-                      detect_area, translate_area) -> dict:
-        """Area mode: grab the detect box off the screen, translate it, draw in box.
+    def _process_areas(self, engine, translator, style, text_mode, areas) -> dict:
+        """Area mode: OCR + translate each detect box into its own translate box.
 
-        Same tiered skipping as screen mode (Tier 0 hash, Tier 2 text), but the
-        source is a raw screen-region grab (no window) and the whole detect box is
-        translated as one block into the fixed translate box at absolute coords.
+        Every area is independent — its own Tier-0 (pixel hash) and Tier-2 (text)
+        skip and its own last draw — so an unchanged area costs nothing and a busy
+        area doesn't force the quiet ones to re-run. When any area changes, all the
+        translate boxes are composited into the single overlay in one pass (see
+        `_draw_areas_overlay`). Returns the areas' combined ja/en for the Text panel
+        and the first area's crop as the preview frame.
         """
-        img = capture.grab_region(detect_area["x"], detect_area["y"],
-                                  detect_area["w"], detect_area["h"])
-        if img is None:
-            return {"ok": False, "error": "Couldn't grab the detect area — check its size."}
-
-        sig = capture.frame_signature(img)  # Tier 0 — detect box unchanged?
-        with self._lock:
-            last_sig = self._last_frame_sig
-        if capture.signatures_match(sig, last_sig):
-            return {"ok": True, "unchanged": True}
-        with self._lock:
-            self._last_frame_sig = sig
-
-        frame = capture.to_data_url(img)
-        try:
-            result = engine.recognize(img)
-        except Exception as exc:
-            return {"ok": True, "frame": frame, "ja": "", "en": "", "error": f"OCR failed: {exc}"}
-
-        ja = result.text
-        with self._lock:  # Tier 2 — text unchanged?
-            if ja == self._last_ocr_text:
-                return {"ok": True, "unchanged": True, "frame": frame}
-        if not ja.strip():
-            self._hide_overlay()
-            with self._lock:
-                self._last_ocr_text = ja
-            return {"ok": True, "frame": frame, "ja": "", "en": ""}
         if translator is None:
-            return {"ok": True, "frame": frame, "ja": ja, "en": "", "note": "translator loading"}
+            return {"ok": True, "note": "translator loading"}
+        # Match the per-area state to the current areas (a reconfigure clears it via
+        # _reset_frame_cache_locked). Hold a local reference so a concurrent reset
+        # can't shift indices under us mid-loop.
+        with self._lock:
+            if len(self._area_state) != len(areas):
+                self._area_state = [{"sig": None, "text": None, "draw": None}
+                                    for _ in areas]
+            states = self._area_state
 
-        regions = [r for r in ocr.group_lines(result.regions) if r.text.strip()]
-        if not regions:
-            self._hide_overlay()
-            with self._lock:
-                self._last_ocr_text = ja
-            return {"ok": True, "frame": frame, "ja": ja, "en": ""}
-        combined = "\n".join(r.text for r in regions)
-        try:
-            en = translator.translate(combined)
-        except Exception as exc:
-            return {"ok": True, "frame": frame, "ja": ja, "en": "", "error": f"translate failed: {exc}"}
+        any_change = False
+        frame = None
+        for i, area in enumerate(areas):
+            # "Skip busy frame" pressed mid-scan: abandon the remaining areas of
+            # this stale frame; the hotkey reset the cache, so the next tick reads
+            # the current frame. Anything already drawn this pass stays until then.
+            if self._interrupt.is_set():
+                return {"ok": True, "frame": frame, "interrupted": True}
+            d = area["detect"]
+            img = capture.grab_region(d["x"], d["y"], d["w"], d["h"])
+            if img is None:
+                continue
+            if frame is None:
+                frame = capture.to_data_url(img)  # first area's crop = UI preview
+            sig = capture.frame_signature(img)
+            st = states[i]
+            if capture.signatures_match(sig, st["sig"]):
+                continue                          # Tier 0 — this box unchanged
+            st["sig"] = sig
+            try:
+                result = engine.recognize(img)
+            except Exception as exc:
+                return {"ok": True, "frame": frame, "error": f"OCR failed: {exc}"}
+            ja = result.text
+            if ja == st["text"]:                  # Tier 2 — this box's text unchanged
+                continue
+            st["text"] = ja
+            if not ja.strip():
+                if st["draw"] is not None:        # text vanished — clear its box
+                    st["draw"], any_change = None, True
+                continue
+            regions = [r for r in ocr.group_lines(result.regions) if r.text.strip()]
+            if not regions:
+                if st["draw"] is not None:
+                    st["draw"], any_change = None, True
+                continue
+            combined = "\n".join(r.text for r in regions)
+            try:
+                en = translator.translate(combined)
+            except Exception as exc:
+                return {"ok": True, "frame": frame, "ja": ja,
+                        "error": f"translate failed: {exc}"}
+            st["draw"] = (combined, en, area["translate"])
+            any_change = True
+
+        if not any_change:
+            return {"ok": True, "unchanged": True, "frame": frame}
+
         with self._lock:
             if not self._capturing:
-                return {"ok": True, "frame": frame, "ja": ja, "en": en, "stopped": True}
+                return {"ok": True, "frame": frame, "stopped": True}
             self._last_hwnd, self._last_pairs = None, None  # area mode: no window
-            self._last_area_draw = (combined, en, translate_area)
-            self._last_ocr_text = ja
-            if self._overlay_enabled:
-                self._draw_area_overlay(combined, en, translate_area, style, text_mode)
-            else:
-                self._hide_overlay_locked()
-        return {"ok": True, "frame": frame, "ja": ja, "en": en}
+            if self._area_state is states:        # not reconfigured mid-flight
+                if self._overlay_enabled:
+                    self._draw_areas_overlay(states, style, text_mode)
+                else:
+                    self._hide_overlay_locked()
+        ja_all = "\n\n".join(st["draw"][0] for st in states if st["draw"])
+        en_all = "\n\n".join(st["draw"][1] for st in states if st["draw"])
+        return {"ok": True, "frame": frame, "ja": ja_all, "en": en_all}
 
     # -- overlay helpers ------------------------------------------------------
     def _ensure_overlay(self):
@@ -859,7 +947,8 @@ class Api:
         preventing the overlay's async show/hide from interleaving.
         """
         self._last_pairs = None
-        self._last_area_draw = None
+        for st in self._area_state:
+            st["draw"] = None
         if self._overlay is not None:
             self._overlay.hide()
 
@@ -884,13 +973,8 @@ class Api:
             text_mode = self._settings["text_mode"]
             if self._last_pairs and self._last_hwnd:  # screen mode — in-place boxes
                 self._draw_overlay(self._last_hwnd, self._last_pairs, style, text_mode)
-            elif self._last_area_draw:  # area mode — one box in the translate area
-                ja, en, area = self._last_area_draw
-                # Prefer the CURRENT translate box: dragging it in the area editor
-                # should move what's already on screen, and the next capture tick
-                # may never come (the tier checks skip an unchanged screen).
-                area = self._settings["translate_area"] or area
-                self._draw_area_overlay(ja, en, area, style, text_mode)
+            elif any(st["draw"] for st in self._area_state):  # area mode — one box per area
+                self._draw_areas_overlay(self._area_state, style, text_mode)
 
     @staticmethod
     def _overlay_text(ja: str, en: str, text_mode: str) -> str:
@@ -953,28 +1037,37 @@ class Api:
 
         self._ensure_overlay().update(items, style)
 
-    def _draw_area_overlay(self, ja: str, en: str, area: dict,
-                           style: dict, text_mode: str) -> None:
-        """Draw the combined translation into the user's fixed translate box.
+    def _draw_areas_overlay(self, states, style: dict, text_mode: str) -> None:
+        """Composite every area's translation into the overlay in one update.
 
-        Area mode: one box at the `translate_area` rectangle (absolute screen px),
-        wrapping the translation to that box's width. Caller MUST hold self._lock.
+        `states` is the per-area state list; each entry's `draw` is
+        (ja, en, translate_rect) or None. One item is built per non-empty area at
+        its own translate box (absolute screen px, wrapped to that box's width) and
+        all are composited onto the single overlay canvas (`overlay.compose_canvas`
+        keeps the gaps between boxes transparent). Caller MUST hold self._lock.
         """
         offx, offy = int(style.get("offset_x", 0)), -int(style.get("offset_y", 0))
-        text = self._overlay_text(ja, en, text_mode)
-        if not text.strip():
+        items = []
+        for st in states:
+            if not st["draw"]:
+                continue
+            ja, en, area = st["draw"]
+            text = self._overlay_text(ja, en, text_mode)
+            if not text.strip():
+                continue
+            tx, ty, tw, th = int(area["x"]), int(area["y"]), int(area["w"]), int(area["h"])
+            items.append({
+                "text": text,
+                "x": tx + offx,
+                "y": ty + offy,
+                # The translate box IS the width limit here (the user sized it), so
+                # wrap to it and grow down within — never stretch past it to the right.
+                "box": (tw, th),
+                "max_w": tw,
+            })
+        if not items:
             self._hide_overlay_locked()
             return
-        tx, ty, tw, th = int(area["x"]), int(area["y"]), int(area["w"]), int(area["h"])
-        items = [{
-            "text": text,
-            "x": tx + offx,
-            "y": ty + offy,
-            # The translate box IS the width limit here (the user sized it), so wrap
-            # to it and grow down within — never stretch past the box to the right.
-            "box": (tw, th),
-            "max_w": tw,
-        }]
         self._ensure_overlay().update(items, style)
 
 
@@ -1005,6 +1098,7 @@ def main() -> None:
     webview.start(**start_kwargs)
     api._hotkey.close()       # unregister the global hotkeys on exit
     api._card_hotkey.close()
+    api._retranslate_hotkey.close()
 
 
 if __name__ == "__main__":

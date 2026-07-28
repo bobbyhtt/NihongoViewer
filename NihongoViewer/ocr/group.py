@@ -46,6 +46,19 @@ _GAP_RATIO = 1.3
 # (79px of overlap is 80% of the label but only 10% of the line).
 _OVERLAP_RATIO = 0.3
 
+# Speaker-name guard. A wrapped sentence's FIRST line runs to the right margin, so
+# it is the WIDEST line of its block — a later line can only be shorter (a wrap
+# never makes line 2 wider than line 1). So a one-line block that is markedly
+# NARROWER than the line about to be attached below it is not a paragraph start at
+# all: it is a standalone label — in a VN, the speaker's name sitting over the
+# dialogue box ("大和" above "「お見事」"). Merging the two translates the name into
+# the sentence ("Yamato, impressive!"), so we refuse the merge when the existing
+# one-line block is under this fraction of the candidate's width. The margin below
+# 1.0 only tolerates OCR box jitter; a genuine wrap (first line >= later lines)
+# never trips it, and a *later* short line — a sentence ending — is unaffected
+# because by then the block's first line is wider than the candidate.
+_NAME_WIDTH_RATIO = 0.7
+
 # --- split-line repair -----------------------------------------------------
 # The detector cuts a very long line into two side-by-side boxes: the 1238px
 # dialogue line "『意識を変えることで、…信じることは" comes back as 26..794 plus
@@ -59,7 +72,15 @@ _LINE_OVERLAP_RATIO = 0.5
 # ...and the horizontal gap between them is no wider than this fraction of the
 # line height. A split is adjacent or slightly overlapping; a genuinely separate
 # element on the same row (a far menu button) sits well beyond that.
-_LINE_GAP_RATIO = 0.5
+#
+# Raised 0.5 -> 1.5: some VN detectors split a line at mid-line punctuation with a
+# real gap (Katawa Shoujo cut "…いいんだ？" | "手紙には…" ~43px apart on a ~38px line,
+# ratio ~1.1). At 0.5 the halves never rejoined and the block pass then stitched
+# the LEFT half to the wrap line while orphaning the right half — the sentence came
+# out torn and out of order. 1.5 bridges a one-glyph-ish split while staying far
+# under the many-line-height gap that separates genuinely distinct on-screen
+# elements (a menu button sits hundreds of px away, not ~1.5 lines).
+_LINE_GAP_RATIO = 1.5
 
 # Line-initial bullet glyphs. A line that starts with one is a standalone list
 # item ("・種族：ウィッチ" — a labelled topic), so it is NOT merged into the
@@ -144,6 +165,11 @@ def group_lines(regions, *, gap_ratio: float = _GAP_RATIO,
                 gap = y0 - by1  # >0 below the block, <0 overlapping it vertically
                 overlap = min(x1, bx1) - max(x0, bx0)
                 width = max(1, x1 - x0)  # the CANDIDATE's span — see _OVERLAP_RATIO
+                # A one-line block much narrower than this candidate is a name
+                # label, not a paragraph's first line — keep them apart (see
+                # _NAME_WIDTH_RATIO).
+                if len(blocks[i]) == 1 and (bx1 - bx0) < _NAME_WIDTH_RATIO * width:
+                    continue
                 if -0.5 * height <= gap <= gap_ratio * height and overlap >= overlap_ratio * width:
                     blocks[i].append(r)
                     boxes[i] = (min(bx0, x0), min(by0, y0), max(bx1, x1), max(by1, y1))

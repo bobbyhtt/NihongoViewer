@@ -240,6 +240,7 @@ const textModeGroup = document.getElementById("text-mode");
 // input can show a freshly-captured combo that isn't live until the user Saves.
 let savedHotkey = "Alt + V";                // hide/show overlay
 let savedCardHotkey = "Alt + C";            // capture into the Create-card stack
+let savedRetranslateHotkey = "Alt + F";     // skip busy frame, translate current one
 const HOTKEY_MODS = new Set(["Ctrl", "Shift", "Alt", "Win"]);
 
 // Tokenize on the spaced " + " our capture emits, so the "+" / "-" keys don't
@@ -301,6 +302,7 @@ function currentSettings() {
     // Saved. Resent unchanged on style saves — the backend only rebinds on change.
     hotkey: savedHotkey,
     card_hotkey: savedCardHotkey,
+    retranslate_hotkey: savedRetranslateHotkey,
   };
 }
 
@@ -435,6 +437,12 @@ const cardHotkeyField = createHotkeyField({
   settingKey: "card_hotkey", resultKey: "card_hotkey",
   getSaved: () => savedCardHotkey, setSaved: (v) => (savedCardHotkey = v),
 });
+const retranslateHotkeyField = createHotkeyField({
+  inputId: "retranslate-hotkey-input", saveId: "retranslate-hotkey-save",
+  statusId: "retranslate-hotkey-status",
+  settingKey: "retranslate_hotkey", resultKey: "retranslate_hotkey",
+  getSaved: () => savedRetranslateHotkey, setSaved: (v) => (savedRetranslateHotkey = v),
+});
 
 // Reflect saved settings into every control on launch.
 function applySettings(s) {
@@ -451,6 +459,7 @@ function applySettings(s) {
   document.getElementById("offset-y").value = s.offset_y;
   hideShowHotkeyField.applySaved(s.hotkey);
   if (s.card_hotkey) cardHotkeyField.applySaved(s.card_hotkey);
+  if (s.retranslate_hotkey) retranslateHotkeyField.applySaved(s.retranslate_hotkey);
   setTextModeButtons(s.text_mode);
   setCaptureModeButtons(s.capture_mode || "screen");
   currentEngine = s.ocr_engine || currentEngine;
@@ -572,6 +581,15 @@ async function ocrTick() {
       // Keep the current detected/translated text and overlay; just refresh the
       // preview if a fresh frame came back (a cutscene behind steady text).
       if (res.frame) setPreview(res.frame);
+      return;
+    }
+    if (res && res.interrupted) {
+      // The "skip busy frame" hotkey fired: this stale frame was abandoned and the
+      // backend reset its cache. Re-run at once (after this call unwinds, so the
+      // ocrBusy guard is clear) to read the current frame instead of waiting for
+      // the next timer tick. Keep whatever's on screen until it lands.
+      if (res.frame) setPreview(res.frame);
+      setTimeout(ocrTick, 0);
       return;
     }
     if (res && res.closed) {

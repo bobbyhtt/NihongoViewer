@@ -24,6 +24,7 @@ DEFAULTS: dict = {
     "ocr_speed": "balanced",        # OCR speed/quality: "fast" | "balanced" | "accurate"
     "hotkey": "Alt+V",              # global hide/show overlay hotkey
     "card_hotkey": "Alt+C",         # global "capture into Create-card stack" hotkey
+    "retranslate_hotkey": "Alt+F",  # global "skip the busy frame, translate the current one"
     "font": "Noto Sans JP",         # overlay font family (bundled, JP+Latin)
     "size": 18,                     # overlay font size (pt)
     "text_color": "#ffffff",        # overlay text color
@@ -40,6 +41,12 @@ DEFAULTS: dict = {
     "capture_mode": "screen",       # "screen" | "area"
     "detect_area": None,            # {x,y,w,h} client-px region to OCR (area mode)
     "translate_area": None,         # {x,y,w,h} client-px box to draw into (area mode)
+    # Area mode supports up to 4 independent detect->translate pairs. `areas` is the
+    # source of truth (a list of {"detect": {x,y,w,h}, "translate": {x,y,w,h}}, absolute
+    # screen px); `detect_area`/`translate_area` above mirror `areas[0]` for the code
+    # that wants the primary area (and for backward compat with pre-multi-area configs,
+    # which `load()` migrates into `areas`).
+    "areas": [],
 }
 # Note: overlay visibility (the hide/show toggle) is intentionally NOT persisted —
 # it's a transient runtime state, so the overlay starts visible every launch.
@@ -66,6 +73,11 @@ def load() -> dict:
         return data
     if isinstance(saved, dict):
         data.update({k: saved[k] for k in DEFAULTS if k in saved})
+    # Migrate a pre-multi-area config (single detect_area/translate_area, no `areas`)
+    # into the `areas` list so the rest of the app has one source of truth.
+    if not data["areas"] and data["detect_area"] and data["translate_area"]:
+        data["areas"] = [{"detect": data["detect_area"],
+                          "translate": data["translate_area"]}]
     return data
 
 

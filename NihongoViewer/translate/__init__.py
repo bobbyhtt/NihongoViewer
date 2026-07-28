@@ -1,12 +1,13 @@
 """Translation pipeline stage — backends behind a common `Translator` ABC.
 
-`create_translator()` returns the configured backend wrapped in a `FuzzyCache`
-(the near-identical-source caching CLAUDE.md requires), so callers get caching
-for free without knowing about it.
+`create_translator()` returns the configured backend wrapped in the caching
+layers `SentenceCache(FuzzyCache(backend))` (the near-identical-source caching
+CLAUDE.md requires, plus per-sentence reuse for accumulating NVL screens), so
+callers get caching for free without knowing about it.
 """
 
 from .base import Translator
-from .cache import FuzzyCache
+from .cache import FuzzyCache, SentenceCache
 
 # name -> "module:ClassName" (kept as strings so `import translate` stays cheap;
 # ctranslate2 is only imported when a backend is actually created).
@@ -31,12 +32,13 @@ def create_translator(name: str = DEFAULT_BACKEND, *, cache: bool = True) -> Tra
     module_name, class_name = _BACKENDS[name]
     module = importlib.import_module(f"{__name__}.{module_name}")
     backend = getattr(module, class_name)()
-    return FuzzyCache(backend) if cache else backend
+    return SentenceCache(FuzzyCache(backend)) if cache else backend
 
 
 __all__ = [
     "Translator",
     "FuzzyCache",
+    "SentenceCache",
     "available_backends",
     "create_translator",
     "DEFAULT_BACKEND",

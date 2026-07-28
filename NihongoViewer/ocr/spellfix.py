@@ -69,6 +69,38 @@ _SMALL_KANA_FIXES = {
     "ちよっと": "ちょっと", "ちよつと": "ちょっと", "ちょつと": "ちょっと",
     "いらっしや": "いらっしゃ",   # いらっしゃる / いらっしゃい (both extend this stem)
     "ひよんな": "ひょんな",
+    # Laughter onomatopoeia with a flattened sokuon (へっへっへ read as へつへつへ).
+    # A mangled sound word is not real Japanese, so the translator ROMANIZES it
+    # ("Hetsu hetsu he") and that romanization mode leaks into the rest of the
+    # line — restoring the っ makes the model translate it as laughter and fixes
+    # the whole line. Longest key first so the 5-char form wins the substring
+    # replace. Only the へ-laughter is listed: the ふ/か equivalents flatten into
+    # real words (ふつふつ = bubbling, かつかつ = barely), so they are NOT safe keys.
+    "へつへつへ": "へっへっへ", "へつへつ": "へっへっ",
+}
+
+# --- hiragana dakuten (voicing-mark) repair --------------------------------
+# OCR sometimes loses a hiragana dakuten/handakuten, so a voiced kana reads as its
+# voiceless twin (ご -> こ, が -> か, ば -> は). This can NOT be a general "add the
+# missing mark" rule: the voiceless form is very often itself a real word — こめん
+# is 湖面 ("lake surface"), こはん is 湖畔 ("lakeside"), ため collides with だめ — so
+# blindly voicing it corrupts correct text. As with the small-kana pass, this is
+# therefore a curated list of exact fragments that are (a) NOT themselves a JMdict
+# word and (b) distinctive enough not to occur inside/across a real word.
+#
+# The ごめん apology family is the common offender in dialogue. Bare "こめん" is
+# deliberately excluded (it is 湖面); each *suffixed* form is a safe key instead,
+# because 湖面って / 湖面ね / 湖面なさい are impossible. Extend as new unambiguous
+# dakuten mangles show up — verify each key is not a JMdict word first.
+_DAKUTEN_FIXES = {
+    "こめんって": "ごめんって",
+    "こめんね": "ごめんね",
+    "こめんなさい": "ごめんなさい",
+    # ごちそう / ごちそうさま(でした) — the after-meal thanks, read こちそう… when
+    # OCR drops the ご dakuten. The 4-char key こちそう is not a JMdict word (bare
+    # こち = "this way" IS, but こちそう is not), so it is safe and covers both the
+    # noun ごちそう and the ごちそうさま phrase.
+    "こちそう": "ごちそう",
 }
 
 _warm_lock = threading.Lock()
@@ -114,9 +146,13 @@ def _correct_run(run: str) -> str | None:
     return hits[0] if len(hits) == 1 else None
 
 
-def _repair_small_kana(text: str) -> str:
-    """Restore flattened small kana from the curated list (ちよっと -> ちょっと)."""
-    for mangled, fixed in _SMALL_KANA_FIXES.items():
+def _repair_curated(text: str) -> str:
+    """Apply the curated substring fixes: small-kana flattening (ちよっと ->
+    ちょっと) and hiragana dakuten drops (こめんって -> ごめんって). Both are plain,
+    verified-safe substring replacements that need no dictionary, so they always
+    run — see the `_SMALL_KANA_FIXES` / `_DAKUTEN_FIXES` notes above.
+    """
+    for mangled, fixed in (*_SMALL_KANA_FIXES.items(), *_DAKUTEN_FIXES.items()):
         if mangled in text:
             text = text.replace(mangled, fixed)
     return text
@@ -125,13 +161,14 @@ def _repair_small_kana(text: str) -> str:
 def correct(text: str) -> str:
     """Repair OCR kana misreads in `text` (best-effort, non-blocking).
 
-    Two passes (see module docstring): the small-kana whitelist (no dictionary,
-    always runs) and the within-katakana confusable repair (needs the JMdict
-    index; if it isn't built yet we kick off a background build and skip it).
+    Two passes (see module docstring): the curated whitelist — small-kana +
+    hiragana dakuten (no dictionary, always runs) — and the within-katakana
+    confusable repair (needs the JMdict index; if it isn't built yet we kick off a
+    background build and skip it).
     """
     if not text:
         return text
-    out = _repair_small_kana(text)
+    out = _repair_curated(text)
 
     needs_kata = any(
         len(m.group()) >= _MIN_LEN and any(c in _ALT for c in m.group())
