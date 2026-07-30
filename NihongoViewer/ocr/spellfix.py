@@ -103,6 +103,24 @@ _DAKUTEN_FIXES = {
     "こちそう": "ごちそう",
 }
 
+# --- OCR ellipsis misread (…… -> ×/x) --------------------------------------
+# PP-OCR reads the Japanese ellipsis leader (…… — a row of small baseline dots,
+# extremely common in VN dialogue) as a run of × / x, mixing the two freely
+# ("ぁ……、ダメ……っ、感じ……" -> "あ×××××、ダメxxxxxx感×xx×xx"). Nothing downstream
+# knows what × means, so it reaches the translator and comes out transliterated as
+# "xxxx" ("…it's a bad xxxx feeling"). A run of 2+ of these marks that is NOT
+# flanked by alphanumerics on both sides is never legitimate text, so we restore it
+# to a single ellipsis — which the translator already handles as the pause it is.
+# The alphanumeric guards leave real math / Latin intact (3×4, 5cm×3m, Max, XXL);
+# a lone "箱×3" (a single ×) is below the 2-char threshold and also left alone.
+_XMARK_ELLIPSIS = re.compile(r"(?<![A-Za-z0-9])[×✕╳xX]{2,}(?![A-Za-z0-9])")
+
+
+def _repair_xmark_ellipsis(text: str) -> str:
+    """Restore an ellipsis PP-OCR misread as a run of ×/x (see the note above)."""
+    return _XMARK_ELLIPSIS.sub("…", text)
+
+
 _warm_lock = threading.Lock()
 _warming = False
 
@@ -169,6 +187,7 @@ def correct(text: str) -> str:
     if not text:
         return text
     out = _repair_curated(text)
+    out = _repair_xmark_ellipsis(out)     # …… misread as ×/x — no dictionary needed
 
     needs_kata = any(
         len(m.group()) >= _MIN_LEN and any(c in _ALT for c in m.group())

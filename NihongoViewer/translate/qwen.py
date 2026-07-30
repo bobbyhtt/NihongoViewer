@@ -105,10 +105,22 @@ _END_TOKENS = ["<|im_end|>", "<|endoftext|>"]
 
 # Decoding: greedy (topk=1) is deterministic, which matters because the fuzzy
 # cache assumes the same source yields the same translation. A light repetition
-# penalty guards against the rare degenerate loop on a garbled OCR line.
-_MAX_LENGTH = 512
+# penalty plus a no-repeat n-gram block guard against the degenerate loop a very
+# broken line can trigger — a moan/stammer line with almost nothing to translate
+# ("んっ、く、ふ……いじわるっ………") sent the model into "very much… very much…" repeated
+# to _MAX_LENGTH, which filled the whole overlay. `no_repeat_ngram_size` makes it
+# IMPOSSIBLE to emit the same 3-token sequence twice, so the loop cannot form
+# regardless of input; the penalty alone (1.05) was too weak to stop it. 3-grams
+# don't recur in normal translation, so ordinary lines are unaffected (a short
+# "no, no" is a 1-gram repeat and still allowed).
+# Hard cap on generated tokens. Lowered 512 -> 160: with SentenceCache every call
+# is a single sentence, whose translation tops out ~35 tokens (measured), so 160 is
+# ample headroom for a real line while bounding a reasoning/repetition runaway the
+# callback misses. (512 let a runaway burn ~120 s.)
+_MAX_LENGTH = 160
 _SAMPLING_TOPK = 1
 _REPETITION_PENALTY = 1.05
+_NO_REPEAT_NGRAM = 3
 
 # Japanese quotation/corner brackets — copied straight through by the model and
 # rendered as tofu ("= =") in the overlay font, so we drop them from both sides.
@@ -154,6 +166,11 @@ _LONE_KANA = re.compile(r"[぀-ゟ゠-ヿｦ-ﾟ]")
 # A `<think>` block, in case the model opens one anyway despite the closed block
 # in the prompt (seen occasionally when the source itself contains the markup).
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
+# The `/no_think` soft switch we append to the user turn (see `_PROMPT`) is a
+# directive, not content — but the model occasionally echoes it into the answer
+# ("…we too /no_think"). It never belongs in a translation, so strip any leaked
+# `/no_think` / `/think` marker from the output.
+_NOTHINK_MARK = re.compile(r"\s*/\s*(?:no[_ ]?)?think\b", re.IGNORECASE)
 # Wrapping quotes the model sometimes adds around the whole line despite the
 # instruction not to — only stripped when they enclose the entire output.
 _WRAPPED_QUOTES = re.compile(r'^\s*["“”「『\'](.*)["“”」』\']\s*$',
@@ -341,6 +358,7 @@ def _clean_output(text: str) -> str:
     # follows it rather than surfacing the reasoning itself.
     if "</think>" in text:
         text = text.rsplit("</think>", 1)[1].strip()
+    text = _NOTHINK_MARK.sub("", text).strip()   # drop a leaked /no_think marker
     match = _WRAPPED_QUOTES.match(text)
     if match:
         text = match.group(1).strip()
@@ -424,6 +442,25 @@ class QwenTranslator(Translator):
         return self._tokenizer.encode(text, add_special_tokens=False).tokens
 
     def _generate(self, source: str) -> str:
+        # Early-stop on runaway reasoning. Qwen3 sometimes ignores the no-think
+        # prompt and reasons out loud ("Okay, let's tackle this translation. The
+        # user provided the Japanese line…") for hundreds of tokens (100+ s) before
+        # an answer we then discard as meta anyway. A real translation is short (a
+        # single sentence tops out ~35 tokens), so as soon as the GROWING output
+        # trips the meta detector we stop generating — turning a ~120 s freeze into
+        # a couple of seconds. `_MAX_LENGTH` is the hard backstop if a reasoning run
+        # somehow avoids the markers.
+        acc: list[int] = []
+
+        def _stop_on_reasoning(res) -> bool:
+            acc.append(res.token_id)
+            # Check every few tokens (decoding each step would be wasteful). The
+            # markers never occur in a real VN translation, so this can't clip a
+            # good line; and a good line ends (end_token) long before it matters.
+            if res.step >= 8 and res.step % 8 == 0:
+                return _looks_meta(self._tokenizer.decode(acc))
+            return False
+
         results = self._generator.generate_batch(
             [self._encode(_PROMPT.format(text=source))],
             static_prompt=self._system_tokens,
@@ -434,7 +471,9 @@ class QwenTranslator(Translator):
             max_length=_MAX_LENGTH,
             sampling_topk=_SAMPLING_TOPK,
             repetition_penalty=_REPETITION_PENALTY,
+            no_repeat_ngram_size=_NO_REPEAT_NGRAM,
             end_token=_END_TOKENS,
+            callback=_stop_on_reasoning,
         )
         if not results or not results[0].sequences_ids:
             return ""

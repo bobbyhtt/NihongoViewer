@@ -708,12 +708,18 @@ class Api:
         already running can't be cancelled (CTranslate2 has no interrupt) — it
         finishes and its result is discarded; the win is skipping everything after
         it and jumping to the current frame.
+
+        We ALSO hide the overlay right away: without visible feedback the press
+        felt like a no-op (the stale translation just lingered until the current
+        frame finished a beat later). Clearing it on press makes the skip visible
+        immediately, and the fresh translation redraws when it's ready.
         """
         with self._lock:
             if not self._capturing:
                 return
             self._interrupt.set()
             self._reset_frame_cache_locked()
+            self._hide_overlay_locked()
 
     # -- the pipeline ---------------------------------------------------------
     def process_frame(self, hwnd) -> dict:

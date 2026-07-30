@@ -37,6 +37,13 @@ import re
 # length >= 2 (a lone kana is never a name and is often punctuation-ish).
 _KATAKANA_RUN = re.compile(r"[ァ-ヺーヿｦ-ﾟ]{2,}")
 
+# Small kana and the ー long-mark can never START a word — nothing begins with a
+# sokuon (ッ) or a small yoon (ャ). A run that starts with one is therefore a
+# word-fragment the OCR split off, not a name: ベッド misread ベ->べ leaves the
+# katakana tail ッド, which romanized becomes garbage ("Xtsudo"). Such a run is
+# left for the model instead of being romanized.
+_KATA_NONINITIAL = set("ァィゥェォッャュョヮヵヶーｧｨｩｪｫｬｭｮｯｰ")
+
 # Furigana: kanji immediately followed by a kana-only reading in (full/half) parens
 # — 鬼戮(きりく). The parens holding *only* kana is the tell that it's a reading.
 _FURIGANA = re.compile(r"([一-鿿々〆ヶ]+)\s*[（(]\s*([ぁ-ゟァ-ヺー]+)\s*[）)]")
@@ -427,6 +434,17 @@ def protect(text: str) -> str:
         if key in text:
             text = text.replace(key, glossary[key])
 
+    # 0a) Kanji-name overrides (names.json). A kanji name never reaches the
+    #     katakana/furigana override checks below, and the analyzer either mistags
+    #     it (静音 -> common noun) or splits it (羽加道 -> 羽/加/道), so a kanji-key
+    #     override is applied here as a direct substring replacement. Katakana-key
+    #     overrides stay CONTEXTUAL (handled below) so a short one can't match
+    #     inside a longer word (リン -> リンゴ). Longest key first.
+    for key in sorted((k for k in overrides if _HAS_KANJI.search(k)),
+                      key=len, reverse=True):
+        if key in text:
+            text = text.replace(key, overrides[key])
+
     # 0b) A bare katakana line is a character-name plate — decided by vocabulary
     #     rather than by POS tag, and repaired first for OCR homoglyphs. Runs
     #     before the general logic below because those homoglyphs ("ト7") stop
@@ -451,6 +469,11 @@ def protect(text: str) -> str:
         run = match.group(0)
         if run in overrides:
             return overrides[run]
+        # A run that STARTS with a small kana / ー is a word-fragment (ベッド misread
+        # as べ + ッド), never a name — romanizing it yields garbage ("Xtsudo"), so
+        # leave it for the model. See _KATA_NONINITIAL.
+        if run[0] in _KATA_NONINITIAL:
+            return run
         # A katakana run written as a verb/adjective stem — followed by hiragana
         # okurigana, e.g. シゴいて for しごいて — is not a name. The model reads bare
         # katakana like シゴ as a name ("Shigo takes …"), so rewrite it to hiragana
