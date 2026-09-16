@@ -63,6 +63,7 @@ All bundled fonts are licensed under the **SIL Open Font License, Version 1.1**
 | Qwen3-4B (int8 CTranslate2 export) | `Qwen/Qwen3-4B` (Alibaba Cloud), converted to CTranslate2 | Apache-2.0 | Translation |
 | PP-OCRv5 mobile recognition (`ocr/models/japan_ppocrv5_rec.onnx`) | PaddleOCR `PP-OCRv5_mobile_rec`, converted to ONNX (`ilaylow/PP_OCRv5_mobile_onnx`); character dictionary from PaddleOCR `ppocrv5_dict.txt` | Apache-2.0 | OCR recognition |
 | PP-OCR text-detection and angle-classification | Included in the `rapidocr-onnxruntime` package | Apache-2.0 | OCR detection |
+| manga-ocr (ONNX export, `ocr/models/manga/`) | `kha-white/manga-ocr-base` (Maciej Budyś), ONNX export via `mayocream/manga-ocr-onnx`; trained on the Manga109-s commercial-permitting subset | Apache-2.0 | Vertical (縦書き) OCR recognition |
 
 ## 4. Dictionary data
 

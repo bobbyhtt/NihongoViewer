@@ -222,6 +222,12 @@ __marimo__/
 # (The small Apache-2.0 OCR model under NihongoViewer/ocr/models/ IS committed.)
 /NihongoViewer/models/
 
+# manga-ocr vertical OCR weights (~460 MB, Apache-2.0) — bundled into the build via
+# --include-data-dir but too large to commit (like the Qwen model, fetched separately
+# from mayocream/manga-ocr-onnx). The small config/vocab files beside them ARE committed.
+/NihongoViewer/ocr/models/manga/*.onnx
+
 # Bundled JMdict index (~63 MB, CC BY-SA 4.0 data) — built/copied at package time
 # into NihongoViewer/dict/ and shipped in the depot; not committed to git.
 /NihongoViewer/dict/
+/ManagaForTest

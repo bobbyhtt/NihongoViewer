@@ -19,6 +19,12 @@ _ENGINES = {
 #: Engine selected when the app first starts.
 DEFAULT_ENGINE = "RapidOCR"
 
+# The vertical (縦書き / manga) engine is NOT in `_ENGINES` on purpose: it is driven by
+# the OCR *mode* toggle (Horizontal/Vertical), not the engine selector, and only runs
+# in Area mode (it's recognition-only — see ocr.manga). Kept as a separate factory so
+# it never shows up in `available_engines()` / the engine dropdown.
+_VERTICAL_ENGINE = ("manga", "MangaEngine")
+
 
 def available_engines() -> list[str]:
     """Names that can be passed to `create_engine`, in display order."""
@@ -40,6 +46,20 @@ def create_engine(name: str, speed: str = DEFAULT_SPEED) -> OcrEngine:
     return getattr(module, class_name)(speed=speed)
 
 
+def create_vertical_engine(speed: str = DEFAULT_SPEED) -> OcrEngine:
+    """Instantiate the vertical (縦書き / manga-ocr) engine (weights load lazily).
+
+    Used for OCR mode = Vertical (Area mode only — the engine is recognition-only).
+    Separate from `create_engine` so the manga engine stays out of the engine
+    dropdown; see `_VERTICAL_ENGINE`.
+    """
+    import importlib
+
+    module_name, class_name = _VERTICAL_ENGINE
+    module = importlib.import_module(f"{__name__}.{module_name}")
+    return getattr(module, class_name)(speed=speed)
+
+
 __all__ = [
     "OcrEngine",
     "OcrRegion",
@@ -47,6 +67,7 @@ __all__ = [
     "group_lines",
     "available_engines",
     "create_engine",
+    "create_vertical_engine",
     "DEFAULT_ENGINE",
     "DEFAULT_SPEED",
     "SPEED_PRESETS",

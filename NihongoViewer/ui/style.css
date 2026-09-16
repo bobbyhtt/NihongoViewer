@@ -185,6 +185,10 @@ body {
   font-size: 13.5px;
 }
 input[type="number"] { -moz-appearance: textfield; }
+/* Disabled input (e.g. Position offset in Area mode) — matches the 0.4 dim used
+   by disabled toggles/buttons; the wrapping .col.disabled dims its label too. */
+.input:disabled { opacity: 0.4; cursor: default; }
+.col.disabled .field-label { opacity: 0.4; }
 
 /* CAPTURE */
 .capture-controls { display: flex; gap: 8px; margin-bottom: 12px; }

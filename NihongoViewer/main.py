@@ -10,6 +10,25 @@ detected/translated text for the debug Text panel.
 """
 
 import os
+
+# --- CPU compatibility: force AVX2, never AVX-512 -----------------------------
+# The native compute libraries (CTranslate2, OpenCV, numpy's OpenBLAS) ship
+# AVX-512 kernels and pick the "best" ISA at runtime. On a build machine WITH
+# AVX-512 (this project builds on an AMD Zen4) that path works; but MOST consumer
+# CPUs have AVX2 and NOT AVX-512 — notably every 12th-gen+ Intel, where Intel
+# disabled AVX-512 in hardware. An AVX-512 instruction there dies instantly with
+# STATUS_ILLEGAL_INSTRUCTION (0xC000001D) at model load, before the window even
+# opens — invisible in-house because the build box has AVX-512. AVX2 is the
+# universal baseline; forcing it costs a little speed only on the rare AVX-512
+# machine, in exchange for running everywhere. These MUST be set before the libs
+# are first imported (they read them at import), so this block leads main.py.
+os.environ.setdefault("CT2_FORCE_CPU_ISA", "AVX2")        # CTranslate2 (translation)
+os.environ.setdefault("OPENBLAS_CORETYPE", "Haswell")     # numpy's OpenBLAS -> AVX2 kernel
+os.environ.setdefault(                                     # OpenCV (OCR) -> disable AVX-512
+    "OPENCV_CPU_DISABLE",
+    "AVX512_SKX,AVX512_COMMON,AVX512_KNL,AVX512_KNM,AVX512_CNL,AVX512_CLX,AVX512_ICL",
+)
+
 import re
 import threading
 from pathlib import Path
@@ -51,6 +70,11 @@ class Api:
         # JS call on its own thread, so a frame can race an engine/style swap.
         self._engine: ocr.OcrEngine | None = None
         self._engine_name: str | None = None
+        # The vertical (縦書き / manga-ocr) engine, loaded lazily the first time OCR
+        # mode = Vertical is used. Separate from `_engine` (the horizontal RapidOCR)
+        # because the two are picked per-frame by OCR mode; see `_ocr_engine_locked`.
+        # Vertical is recognition-only, so it's only used in Area mode.
+        self._manga_engine: ocr.OcrEngine | None = None
         self._translator: translate.Translator | None = None
         self._overlay = None  # created lazily on first draw (overlay.Overlay)
         # The pywebview window, set in main() once it exists. Used to push events
@@ -277,6 +301,47 @@ class Api:
             if engine is not None:
                 engine.apply_speed(speed)
         return {"ok": True, "speed": speed}
+
+    def set_ocr_mode(self, mode: str) -> dict:
+        """Select the OCR reading direction (Horizontal / Vertical).
+
+        Horizontal uses the shipped RapidOCR engine (detect + recognize, whole
+        frame). Vertical (縦書き) uses the recognition-only manga-ocr engine and so
+        only takes effect in **Area mode** — the user boxes a bubble/column and it
+        reads the crop (a full-frame Screen capture stays on RapidOCR). The two
+        engines are picked per-frame by `process_frame`; here we just persist the
+        choice and, for Vertical, load the manga weights up front so a load failure
+        surfaces now rather than mid-capture.
+        """
+        if mode not in ("horizontal", "vertical"):
+            return {"ok": False, "error": f"unknown OCR mode {mode!r}"}
+        with self._lock:
+            self._settings["ocr_mode"] = mode
+            config.save(self._settings)
+            # The active engine may change, so re-OCR the current frame next tick.
+            self._reset_frame_cache_locked()
+        if mode == "vertical":
+            res = self._ensure_manga_engine()
+            if not res["ok"]:
+                return {"ok": False, "mode": mode, "error": res["error"]}
+        return {"ok": True, "mode": mode}
+
+    def _ensure_manga_engine(self) -> dict:
+        """Lazily create + load the vertical (manga-ocr) engine. Loads outside the
+        lock (weights are slow) and caches it on `self._manga_engine`."""
+        with self._lock:
+            engine = self._manga_engine
+            speed = self._settings["ocr_speed"]
+        if engine is not None:
+            return {"ok": True, "engine": engine}
+        try:
+            engine = ocr.create_vertical_engine(speed)
+            engine.load()
+        except Exception as exc:
+            return {"ok": False, "error": f"Vertical OCR failed to load: {exc}"}
+        with self._lock:
+            self._manga_engine = engine
+        return {"ok": True, "engine": engine}
 
     # -- translation stage ----------------------------------------------------
     def load_translator(self) -> dict:
@@ -735,9 +800,24 @@ class Api:
             style = {k: self._settings[k] for k in config.STYLE_KEYS}
             text_mode = self._settings["text_mode"]
             mode = self._settings["capture_mode"]
+            ocr_mode = self._settings["ocr_mode"]
             areas = self._area_pairs_locked()
         if engine is None:
             return {"ok": False, "error": "OCR engine not ready"}
+
+        # Vertical (縦書き) OCR mode reads with the recognition-only manga-ocr engine.
+        # In AREA mode the user boxes each bubble, so manga-ocr reads the crop directly
+        # (engine swapped below). In SCREEN mode manga-ocr has no detector, so we keep
+        # RapidOCR's DB detector to FIND the text and hand each merged block to
+        # manga-ocr to READ (see the recognize call below); `engine` stays RapidOCR.
+        manga_engine = None
+        if ocr_mode == "vertical":
+            res = self._ensure_manga_engine()
+            if not res["ok"]:
+                return {"ok": False, "error": res["error"]}
+            manga_engine = res["engine"]
+            if mode == "area":
+                engine = manga_engine
 
         # Area mode grabs raw screen pixels inside each detect box (no window
         # needed) and draws each translation into its own translate box — a
@@ -784,7 +864,14 @@ class Api:
         frame = capture.to_data_url(img)
 
         try:
-            result = engine.recognize(img)
+            if manga_engine is not None:
+                # Screen + Vertical: RapidOCR (still `engine` here) detects the text
+                # boxes, manga-ocr reads each merged block (already grouped into
+                # bubbles, so group_lines is skipped below).
+                boxes = engine.detect_boxes(img)
+                result = manga_engine.recognize_frame(img, boxes)
+            else:
+                result = engine.recognize(img)
         except Exception as exc:
             return {"ok": True, "frame": frame, "ja": "", "en": "", "error": f"OCR failed: {exc}"}
 
@@ -819,7 +906,12 @@ class Api:
         # translated in fragments — mangled or half-dropped. Grouping keeps a
         # genuinely separate element (a name, a far menu button) its own block, so
         # the overlay still draws a box over each. (See ocr.group_lines.)
-        regions = [r for r in ocr.group_lines(result.regions) if r.text.strip()]
+        # Vertical (manga) already returns one region per merged bubble, so skip the
+        # horizontal line-grouping and use its regions as-is.
+        if manga_engine is not None:
+            regions = [r for r in result.regions if r.text.strip()]
+        else:
+            regions = [r for r in ocr.group_lines(result.regions) if r.text.strip()]
         if not regions:  # OCR text but nothing boxed to draw — clear the overlay
             self._hide_overlay()
             with self._lock:
@@ -1052,7 +1144,11 @@ class Api:
         all are composited onto the single overlay canvas (`overlay.compose_canvas`
         keeps the gaps between boxes transparent). Caller MUST hold self._lock.
         """
-        offx, offy = int(style.get("offset_x", 0)), -int(style.get("offset_y", 0))
+        # Position offset is deliberately NOT applied in Area mode: the user already
+        # placed each translate box exactly where they want it in Configure Area, so
+        # the X/Y offset (a Screen-mode control) would only shift it off that box.
+        # The UI disables the field in Area mode; this makes any stored value a no-op
+        # too, so a value set earlier in Screen mode can't leak into Area placement.
         items = []
         for st in states:
             if not st["draw"]:
@@ -1064,8 +1160,8 @@ class Api:
             tx, ty, tw, th = int(area["x"]), int(area["y"]), int(area["w"]), int(area["h"])
             items.append({
                 "text": text,
-                "x": tx + offx,
-                "y": ty + offy,
+                "x": tx,
+                "y": ty,
                 # The translate box IS the width limit here (the user sized it), so
                 # wrap to it and grow down within — never stretch past it to the right.
                 "box": (tw, th),

@@ -98,6 +98,12 @@
               </button>
             </div>
 
+            <label class="field-label" title="Reading direction the OCR expects. Vertical (縦書き) is for manga and some visual novels.">OCR mode</label>
+            <div class="toggle-group" id="ocr-mode" data-group="ocrmode">
+              <button class="toggle active" data-ocrmode="horizontal">Horizontal</button>
+              <button class="toggle" data-ocrmode="vertical">Vertical</button>
+            </div>
+
             <label class="field-label">Hide / show hotkey</label>
             <div class="hotkey-row">
               <input class="input" type="text" id="hotkey-input" value="Alt + V"
@@ -484,9 +490,9 @@
             locally on your machine, with no cloud services at runtime.
           </p>
           <div class="about-meta">
-            <span>© 2026 Tanachot Srisombat. All rights reserved.</span>
+            <span>© 2026 Tanachot Srisombat (Chottosoft). All rights reserved.</span>
             <span>Licensed under the Yakutori End User License Agreement.</span>
-            <a class="link" href="mailto:tanachot.Yakutori@hotmail.com">tanachot.Yakutori@hotmail.com</a>
+            <a class="link" href="mailto:tanachot.yakutori@gmail.com">tanachot.yakutori@gmail.com</a>
           </div>
         </section>
 
@@ -506,6 +512,7 @@
                 <li><span class="lic-name">Qwen3-4B</span><span class="lic-desc">Translation model · Alibaba Cloud</span><span class="lic-badge">Apache-2.0</span></li>
                 <li><span class="lic-name">RapidOCR</span><span class="lic-desc">ONNX OCR runtime (PP-OCR det + rec)</span><span class="lic-badge">Apache-2.0</span></li>
                 <li><span class="lic-name">PP-OCRv5 model</span><span class="lic-desc">Japanese text-recognition weights · bundled</span><span class="lic-badge">Apache-2.0</span></li>
+                <li><span class="lic-name">manga-ocr</span><span class="lic-desc">Vertical (縦書き) OCR model · kha-white / mayocream</span><span class="lic-badge">Apache-2.0</span></li>
                 <li><span class="lic-name">CTranslate2</span><span class="lic-desc">Translation inference engine</span><span class="lic-badge">MIT</span></li>
                 <li><span class="lic-name">Tokenizers</span><span class="lic-desc">Byte-level BPE tokenizer · Hugging Face</span><span class="lic-badge">Apache-2.0</span></li>
                 <li><span class="lic-name">ONNX Runtime</span><span class="lic-desc">OCR model runtime</span><span class="lic-badge">MIT</span></li>

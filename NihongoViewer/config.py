@@ -22,6 +22,9 @@ APP_NAME = "NihongoViewer"
 DEFAULTS: dict = {
     "ocr_engine": "RapidOCR",       # active OCR engine (see ocr.available_engines())
     "ocr_speed": "balanced",        # OCR speed/quality: "fast" | "balanced" | "accurate"
+    "ocr_mode": "horizontal",       # OCR reading direction: "horizontal" | "vertical" (縦書き).
+                                    # Horizontal = RapidOCR (whole frame). Vertical = manga-ocr
+                                    # (recognition-only), which only takes effect in Area mode.
     "hotkey": "Alt+V",              # global hide/show overlay hotkey
     "card_hotkey": "Alt+C",         # global "capture into Create-card stack" hotkey
     "retranslate_hotkey": "Alt+F",  # global "skip the busy frame, translate the current one"

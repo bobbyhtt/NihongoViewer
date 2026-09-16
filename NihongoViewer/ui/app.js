@@ -2,7 +2,7 @@
 
 // Generic visual-only toggle groups. The Text mode and Capture mode groups
 // (which persist + drive behavior) are handled separately.
-document.querySelectorAll(".toggle-group:not(#text-mode):not(#capture-mode)").forEach((group) => {
+document.querySelectorAll(".toggle-group:not(#text-mode):not(#capture-mode):not(#ocr-mode)").forEach((group) => {
   group.querySelectorAll(".toggle").forEach((btn) => {
     btn.addEventListener("click", () => {
       group.querySelectorAll(".toggle").forEach((b) => b.classList.remove("active"));
@@ -28,6 +28,19 @@ function setCaptureModeButtons(mode) {
   configureAreaBtn.hidden = !area;
   document.getElementById("window-select").hidden = area;
   document.getElementById("refresh-btn").hidden = area;
+  // Position offset is redundant in Area mode: the overlay box is placed by the
+  // translate rect the user drags in Configure Area, so the X/Y offset does
+  // nothing there. Disable + dim it to avoid the confusion (re-enabled on Screen).
+  ["offset-x", "offset-y"].forEach((id) => {
+    const input = document.getElementById(id);
+    input.disabled = area;
+    input.title = area
+      ? "Not used in Area mode — set the overlay position with Configure Area"
+      : (id === "offset-x"
+          ? "Horizontal offset in pixels (+right / −left)"
+          : "Vertical offset in pixels (+up / −down)");
+  });
+  document.getElementById("offset-x").closest(".col").classList.toggle("disabled", area);
 }
 captureModeGroup.querySelectorAll(".toggle").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -217,6 +230,9 @@ let ocrBusy = false; // guards against overlapping process_frame() calls
 let engineReady = false;
 let translatorReady = false;
 let currentEngine = "RapidOCR";
+// The vertical engine (MangaOCR) loads lazily the first time Vertical mode is used;
+// this tracks whether its weights are ready so the status label is accurate.
+let mangaReady = false;
 
 function setDetected(text, dim = false) {
   detectedJa.textContent = text;
@@ -232,9 +248,51 @@ function setOcrStatus(label) {
   ocrStatus.textContent = `● OCR: ${label}`;
 }
 
+// The bottom status shows the engine that will actually run for the current OCR mode:
+// MangaOCR for Vertical, RapidOCR (currentEngine) for Horizontal — each with its own
+// loading/ready state.
+function refreshOcrStatus() {
+  if (activeOcrMode() === "vertical") {
+    setOcrStatus(mangaReady ? "MangaOCR" : "MangaOCR (loading…)");
+  } else {
+    const name = currentEngine || "RapidOCR";
+    setOcrStatus(engineReady ? name : `${name} (loading…)`);
+  }
+}
+
+// Apply an OCR mode: persist it via the backend (which swaps the active engine and, for
+// Vertical, preloads the MangaOCR weights so a load failure shows now, not mid-capture),
+// and reflect the result in the status label. Shared by the toggle and startup.
+async function applyOcrMode(mode) {
+  if (!hasApi()) return;
+  if (mode === "vertical" && !mangaReady) setOcrStatus("MangaOCR (loading…)");
+  let res;
+  try {
+    res = await window.pywebview.api.set_ocr_mode(mode);
+  } catch (e) {
+    res = { ok: false, error: String(e) };
+  }
+  if (res && !res.ok) {
+    if (mode === "vertical") {
+      mangaReady = false;
+      setOcrStatus("MangaOCR (unavailable)");
+      setDetected(`Vertical OCR unavailable — ${(res && res.error) || "failed to load"}`, true);
+    } else {
+      refreshOcrStatus();
+    }
+    return;
+  }
+  if (mode === "vertical") {
+    mangaReady = true;
+    setDetected("Vertical OCR ready (MangaOCR) — works in Screen and Area mode.");
+  }
+  refreshOcrStatus();
+}
+
 // ---- Settings: mirror the panel to the overlay + persist to disk ------------
 
 const textModeGroup = document.getElementById("text-mode");
+const ocrModeGroup = document.getElementById("ocr-mode");
 
 // The committed combos (what's actually persisted + registered). Each hotkey
 // input can show a freshly-captured combo that isn't live until the user Saves.
@@ -277,6 +335,18 @@ function setTextModeButtons(mode) {
     b.classList.toggle("active", b.dataset.mode === mode));
 }
 
+// OCR reading direction (horizontal / vertical). Persisted like Text mode; the
+// vertical path is not wired to a model yet, so this only stores the choice.
+function activeOcrMode() {
+  const active = ocrModeGroup.querySelector(".toggle.active");
+  return (active && active.dataset.ocrmode) || "horizontal";
+}
+
+function setOcrModeButtons(mode) {
+  ocrModeGroup.querySelectorAll(".toggle").forEach((b) =>
+    b.classList.toggle("active", b.dataset.ocrmode === mode));
+}
+
 // Custom color pickers (replace the native <input type="color">). Committing a
 // color via the popup's Save button applies + persists it live via saveSettings.
 const textColorPicker = new ColorPicker(document.getElementById("text-color"), {
@@ -297,6 +367,7 @@ function currentSettings() {
     offset_x: Number(document.getElementById("offset-x").value) || 0,
     offset_y: Number(document.getElementById("offset-y").value) || 0,
     text_mode: activeTextMode(),
+    ocr_mode: activeOcrMode(),
     capture_mode: activeCaptureMode(),
     // Only the committed combos; a freshly-captured one stays in its field until
     // Saved. Resent unchanged on style saves — the backend only rebinds on change.
@@ -329,6 +400,18 @@ textModeGroup.querySelectorAll(".toggle").forEach((btn) => {
     textModeGroup.querySelectorAll(".toggle").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     saveSettings();
+  });
+});
+
+ocrModeGroup.querySelectorAll(".toggle").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const mode = btn.dataset.ocrmode || "horizontal";
+    ocrModeGroup.querySelectorAll(".toggle").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    saveSettings();
+    // Vertical swaps in MangaOCR (loads its weights the first time, Area mode only);
+    // Horizontal is RapidOCR. applyOcrMode persists the choice and updates the status.
+    applyOcrMode(mode);
   });
 });
 
@@ -461,6 +544,7 @@ function applySettings(s) {
   if (s.card_hotkey) cardHotkeyField.applySaved(s.card_hotkey);
   if (s.retranslate_hotkey) retranslateHotkeyField.applySaved(s.retranslate_hotkey);
   setTextModeButtons(s.text_mode);
+  setOcrModeButtons(s.ocr_mode);
   setCaptureModeButtons(s.capture_mode || "screen");
   currentEngine = s.ocr_engine || currentEngine;
   currentSpeed = s.ocr_speed || currentSpeed;
@@ -500,7 +584,7 @@ async function selectEngine(name) {
   if (!hasApi()) return;
   currentEngine = name;
   engineReady = false;
-  setOcrStatus(`${name} (loading…)`);
+  refreshOcrStatus(); // "(loading…)" — or keep MangaOCR's label if Vertical is active
 
   let res;
   try {
@@ -514,7 +598,7 @@ async function selectEngine(name) {
     // The backend may have fallen back to a different engine (e.g. a saved config
     // named a removed engine); reflect the engine that actually loaded.
     currentEngine = res.engine || name;
-    setOcrStatus(currentEngine);
+    refreshOcrStatus(); // shows RapidOCR (Horizontal) or MangaOCR (Vertical)
     notifyCaptureChanged(); // refresh the Create-card status badge with the engine
   } else {
     engineReady = false;
@@ -652,8 +736,9 @@ window.addEventListener("pywebviewready", async () => {
     /* fall back to the HTML defaults */
   }
   saveSettings(); // seed the overlay with the restored settings
-  selectEngine(currentEngine); // load the saved/default OCR engine up front
+  selectEngine(currentEngine); // load the saved/default (horizontal) OCR engine up front
   loadTranslator(); // and the translation backend (both download on first run)
+  applyOcrMode(activeOcrMode()); // reflect the saved OCR mode; preloads MangaOCR if Vertical
 });
 
 // About page: open the bundled third-party licenses file in the OS default app.

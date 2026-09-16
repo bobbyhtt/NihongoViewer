@@ -4,6 +4,13 @@ Guidance for Claude Code (and human contributors) working in this repository.
 
 ## What we're building
 
+> **Status (2026):** **Shipped on Steam** as *Yakutori* (publisher **Chottosoft**); the
+> build + store setup is done. **Vertical Japanese (縦書き / tategaki) reading has
+> landed** via a torch-free **manga-ocr (ONNX)** engine, selected by the **OCR mode**
+> setting — in **Area mode** (the user boxes a bubble) and, experimentally, in **Screen
+> mode** (RapidOCR detects the boxes, manga-ocr reads each merged bubble). See
+> [Open decisions](#open-decisions) #3 for status and what still needs tuning.
+
 **NihongoViewer** is an offline, real-time screen translator for Japanese games and
 applications (inspired by [bquenin/interpreter](https://github.com/bquenin/interpreter)).
 It watches a chosen window, captures frames at a configurable rate, runs OCR on each
@@ -25,11 +32,16 @@ Screen Capture -> OCR -> Translation -> Display
 1. **Screen Capture** — grabs the target window's pixels at the configured refresh
    rate (e.g. 1–10 fps). This is a polling loop, **not** a video pipeline.
 2. **OCR** — extracts Japanese text from the captured frame. Engines sit behind a
-   common ABC so the stage stays swappable, but **RapidOCR is the only shipped
-   engine** — horizontal text via the RapidOCR runtime + PP-OCRv5 ONNX models, all Apache-2.0
-   and torch/paddle-free. (Two engines were removed: MangaOCR, a torch-based
-   vertical-text engine; and MeikiOCR, whose model *weights* were LGPL-3.0 — both
-   non-starters for the commercial Steam build. See [Open decisions](#open-decisions).)
+   common ABC so the stage stays swappable. Two engines ship, picked per-frame by the
+   **OCR mode** setting: **RapidOCR** for horizontal text (RapidOCR runtime + PP-OCRv5
+   ONNX, whole frame, detect+recognize) and **manga-ocr (ONNX)** for vertical (縦書き)
+   text — both Apache-2.0 and torch/paddle-free. manga-ocr is **recognition-only** (no
+   detector, no boxes: it reads one crop → one string). In **Area mode** the user boxes
+   the bubble; in **Screen mode** RapidOCR's DB detector supplies the boxes and manga-ocr
+   reads each merged bubble (detect→merge→recognize, see Open decisions #3). (Note: the *torch*
+   build of manga-ocr, and MeikiOCR whose *weights* were LGPL-3.0, were both removed as
+   non-starters for the commercial build; the shipped manga-ocr here is the torch-free
+   ONNX export with Apache-2.0 weights. See [Open decisions](#open-decisions).)
 3. **Translation** — Qwen3-4B (`Qwen/Qwen3-4B`, Apache-2.0 — commercial-safe)
    translates JA → EN locally via CTranslate2. Identical/near-identical
    source text should hit a cache instead of re-translating (**fuzzy** match, not just
@@ -129,14 +141,22 @@ cleanly.
 - **Screen capture**: **`mss`** for cross-platform static frame capture. Fall back to
   platform-native capture only if `mss` proves insufficient for a specific OS (document
   why here if that happens).
-- **OCR**:
-  - PaddleOCR via **RapidOCR** (`rapidocr-onnxruntime`, Apache-2.0) — the only shipped
-    engine. Runs PP-OCR **detection** (bundled in the rapidocr wheel) + **PP-OCRv5**
-    Japanese **recognition** (`ocr/models/japan_ppocrv5_rec.onnx`, bundled; dict baked
-    into the ONNX) on ONNX Runtime — **no PaddlePaddle and no torch at runtime**. Both
-    code and weights are Apache-2.0 (commercial-clean). **Do not reintroduce any
-    PyTorch-based OCR** (e.g. manga-ocr) or any model with copyleft weights (e.g.
-    MeikiOCR's LGPL-3.0 weights): both are non-starters for the commercial Steam build.
+- **OCR** (two engines, both ONNX Runtime, both Apache-2.0 code + weights, **no
+  PaddlePaddle and no torch at runtime** — picked per-frame by the OCR-mode setting):
+  - **Horizontal** — PaddleOCR via **RapidOCR** (`rapidocr-onnxruntime`, Apache-2.0).
+    Runs PP-OCR **detection** (bundled in the rapidocr wheel) + **PP-OCRv5** Japanese
+    **recognition** (`ocr/models/japan_ppocrv5_rec.onnx`, bundled; dict baked into the
+    ONNX). Whole-frame detect+recognize.
+  - **Vertical (縦書き)** — **manga-ocr (ONNX)** (`ocr/models/manga/`, from
+    `mayocream/manga-ocr-onnx`; a ViT encoder + autoregressive decoder run via pure
+    `onnxruntime`, Apache-2.0 weights). **Recognition-only** — no detector, no boxes:
+    it turns one crop into one string — so it only runs in **Area mode** (`ocr/manga.py`,
+    `create_vertical_engine`). Character-level tokenizer, so decoding is an id→`vocab.txt`
+    lookup with **no MeCab/unidic at runtime**.
+  - **Do not reintroduce a *torch-based* OCR** (the original PyTorch manga-ocr) or any
+    model with **copyleft weights** (e.g. MeikiOCR's LGPL-3.0 weights): both are
+    non-starters for the commercial Steam build. The shipped manga-ocr here is the
+    torch-free ONNX export with Apache-2.0 weights — that distinction is the whole point.
 - **Translation**: Qwen3-4B (`Qwen/Qwen3-4B`, Apache-2.0) via `ctranslate2`'s
   decoder-only `Generator` + `tokenizers` (byte-level BPE). **No torch at runtime**;
   torch/transformers are needed only *offline on the build machine* to produce the
@@ -201,8 +221,9 @@ NihongoViewer/
   capture.py                  # Win32 window enum/geometry + WGC per-window capture
   ocr/                        # OCR stage — engines behind a common ABC
     base.py                   #   OcrEngine ABC + OcrResult/OcrRegion (text + boxes)
-    paddle.py                 #   RapidOCR engine (PP-OCRv5 ONNX, horizontal) — the only engine
-    models/                   #   bundled PP-OCRv5 JA recognition ONNX (Apache-2.0)
+    paddle.py                 #   RapidOCR engine (PP-OCRv5 ONNX, horizontal)
+    manga.py                  #   manga-ocr engine (ONNX, vertical 縦書き; Area mode, recognition-only)
+    models/                   #   bundled PP-OCRv5 JA recognition ONNX + manga/ (manga-ocr ONNX), Apache-2.0
     group.py                  #   group line-regions into positioned sentence-chunks
     __init__.py               #   create_engine() factory + registry
   translate/                  # Translation stage — backends behind a common ABC
@@ -273,4 +294,55 @@ the answer here.
    torch-free and free of copyleft weights. PP-OCRv5 does have some vertical-text
    capability, but the shipped detection path is horizontal; a dedicated vertical mode
    is still future work. OCR orientation auto-detection is moot for now (single engine).
+
+   **Vertical (縦書き / tategaki) recognition — DONE (Sept 2026), detection still open.**
+   The vertical **recognition** blocker is solved: a torch-free **manga-ocr (ONNX)**
+   engine (`ocr/manga.py`, weights `ocr/models/manga/` from `mayocream/manga-ocr-onnx`,
+   Apache-2.0 code *and* weights — license verified, unlike MeikiOCR's LGPL weights) now
+   reads tategaki. It's wired to the **OCR mode** setting (`config.ocr_mode`,
+   `Api.set_ocr_mode`) and, because manga-ocr is **recognition-only** (one crop → one
+   string, no detector/boxes), is used in **Area mode only** — the user boxes the
+   bubble/column. `process_frame` picks manga-ocr for `ocr_mode=="vertical" and
+   capture_mode=="area"`, else RapidOCR. Verified reading clean synthetic tategaki
+   (`こんにちは`, `お前はもう死んでいる`, rare kanji `鬼戮`) at ~0.15 s/crop on CPU; a blank
+   box is guarded by a grayscale-variance check so it doesn't hallucinate.
+
+   **Screen-mode vertical — IMPLEMENTED (experimental).** Full-frame vertical now works
+   via **detect → merge → recognize**: RapidOCR's DB detector finds the text boxes
+   (`PaddleEngine.detect_boxes`, detection-only so no box is dropped by a bad horizontal
+   read), adjacent column-boxes are merged into per-bubble blocks (`_merge_boxes`, wider
+   x-gap than y-gap allowance), and each block crop is read by manga-ocr
+   (`MangaEngine.recognize_frame`). No rotation is needed — manga-ocr reads vertical
+   multi-column bubbles in correct right-to-left order natively; a `_pad_toward_square`
+   step keeps a lone tall column from being squashed by the 224² resize. `process_frame`
+   uses this when `ocr_mode=="vertical" and capture_mode=="screen"` (RapidOCR stays the
+   detector, manga-ocr the reader); `group_lines` is skipped for it (blocks are already
+   final). **Tuned + validated on a real manga/doujin set** (SFW + NSFW, 4 sources): a
+   lowered DB `box_thresh` (0.3, in `detect_boxes`) catches faint bubbles over sky/art;
+   `no_repeat_ngram_size=3` in the greedy decode stops manga-ocr looping on big scream
+   SFX (`いやあああ…` → 160×あ); a **block-width cap** (`_MAX_BLOCK_COLS`, drop blocks
+   wider than ~9 text-columns) removes art-blob hallucinations and wide SFX (measured
+   11–14 cols vs dialogue ≤~7); and a **glyph-size cap** (`_MAX_GLYPH_RATIO`, drop blocks
+   whose median glyph thickness is ≥2× the page's normal text **and** that sit on a busy
+   background `_GLYPH_RING_STD`) removes the tall/narrow drawn graphic sound-effects the
+   width cap misses — manga-ocr mis-reads those stylised brush glyphs as garbage
+   (`んええろいいう`), dialogue measured 0.8–1.6× vs SFX 2–5.6×. The busy-background gate is
+   essential: a shout drawn LARGE inside a clean balloon (`和真おはよ`, ring std 0–11) is
+   real dialogue and must be kept, while drawn SFX over art measured ring std 52–107.
+   The intended focus is text inside speech bubbles, not graphic SFX; coverage is good.
+   Two more focus filters: a **merge size-guard** (`_MERGE_SIZE_RATIO`) stops a dialogue
+   column absorbing a big adjacent brush-SFX box (the bug where `俺の…ッ♥` merged with the
+   `ぬちゃ` moan and read as garbage), and a **targeted small-SFX drop** (`_SFX_MAX_CHARS`
+   / `_SFX_RING_STD` / `_ring_std`) removes handwritten SFX that are the same *size* as
+   dialogue (`や`/`ぐぢ`/`ドキ`) by requiring short + kana-only + busy background — sparing
+   narration (has kanji) and short lines inside clean bubbles. Graded against the manga
+   set (SFW + NSFW): kept bubbles read correctly (~15–17/page on K-On), SFX ignored.
+   **Accepted trade-off**: a genuine 1–3 char kana line printed over artwork (not in a
+   balloon) can be dropped. Dramatic **dot-spaced** vertical text (`彼・は・選・ば…`) is
+   handled by keeping wide strips (aspect cut raised to 5:1, so 8:1+ watermarks still go)
+   and merging boxes that OVERLAP in x regardless of size (the size-guard applies only to
+   side-by-side boxes) — the strips rejoin into the bubble and read correctly. Cost: on a
+   pure title/logo page (no normal text to set the glyph baseline) a wide decorative
+   stroke can now emit ~1 garbage line. **Remaining**: longer kana-only SFX (`ドキドキ`)
+   can slip through; manga-ocr mis-reads very stylised text — inherent, acceptable.
 ```

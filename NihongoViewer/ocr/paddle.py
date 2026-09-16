@@ -84,6 +84,16 @@ _DETECT_TARGET_RATIO = 2.0   # ...down to ~2:1, where a filled line reads whole
 # model reload — so apply_speed stays live.
 _SPEED_UPSCALE = {"fast": 1.0, "balanced": 1.5, "accurate": 2.0}
 
+# More sensitive DB-detector thresholds used ONLY by `detect_boxes` (the vertical/manga
+# Screen path). A manga bubble drawn over busy/bright art — text over a bright sky, a thin
+# outline — scores below RapidOCR's default box_thresh (0.5) and gets missed, even though
+# most bubbles (over flat white) detect fine. detect_boxes lowers these for its own call
+# and restores them, so horizontal recognition's detection is unchanged. Extra faint boxes
+# this lets through are cheap: the aspect filter + manga-ocr's variance/Japanese gate drop
+# non-text. (box_thresh = min mean score to keep a box; thresh = prob-map binarization.)
+_DETECT_BOX_THRESH = 0.3
+_DETECT_BIN_THRESH = 0.2
+
 
 # RapidOCR resolves its detection / classification / recognition stages by BARE
 # top-level module name (`ch_ppocr_v3_det`, ...) — its config.yaml stores those
@@ -148,6 +158,49 @@ class PaddleEngine(OcrEngine):
         if longest * scale > self._max_dimension:
             scale = max(1.0, self._max_dimension / longest)
         return scale
+
+    def detect_boxes(self, image: Image.Image) -> list:
+        """Run ONLY the DB text detector and return axis-aligned boxes (source px).
+
+        Detection-only (no recognition) so it keeps *every* text region regardless of
+        what the horizontal recognizer would make of it — used by the vertical (manga)
+        Screen-mode path, which finds text with this detector and reads it with
+        manga-ocr. Boxes are mapped back through the same letterbox/upscale as
+        `recognize`, so they line up with the original image the caller crops.
+        """
+        self.load()
+        image = image.convert("RGB")
+        image, pad_top = _letterbox(image)
+        scale = self._scale_for(image.width, image.height)
+        src = image
+        if scale != 1.0:
+            src = image.resize(
+                (round(image.width * scale), round(image.height * scale)),
+                Image.BICUBIC,
+            )
+        arr = np.asarray(src)[:, :, ::-1].copy()  # BGR for the detector
+        # Temporarily lower the DB thresholds so faint bubbles (text over sky/art) are
+        # kept; restore them so the horizontal recognize() path is unaffected. Safe
+        # because process_frame runs one frame at a time.
+        pp = getattr(self._ocr.text_detector, "postprocess_op", None)
+        saved = None
+        if pp is not None:
+            saved = (pp.box_thresh, pp.thresh)
+            pp.box_thresh, pp.thresh = _DETECT_BOX_THRESH, _DETECT_BIN_THRESH
+        try:
+            dt = self._ocr.text_detector(arr)
+        finally:
+            if pp is not None and saved is not None:
+                pp.box_thresh, pp.thresh = saved
+        quads = dt[0] if isinstance(dt, tuple) else dt
+        boxes = []
+        if quads is None:
+            return boxes
+        for quad in quads:
+            b = _quad_box(quad, scale, pad_top)
+            if b is not None:
+                boxes.append(b)
+        return boxes
 
     def recognize(self, image: Image.Image) -> OcrResult:
         self.load()
@@ -224,7 +277,7 @@ def _quad_box(quad, scale: float = 1.0, y_offset: int = 0):
     back to the original (un-upscaled) image the caller positions against.
     `y_offset` undoes any letterbox padding (see `_letterbox`).
     """
-    if not quad:
+    if quad is None or len(quad) == 0:
         return None
     xs = [p[0] for p in quad]
     ys = [p[1] for p in quad]

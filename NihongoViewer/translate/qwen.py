@@ -168,9 +168,12 @@ _LONE_KANA = re.compile(r"[぀-ゟ゠-ヿｦ-ﾟ]")
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
 # The `/no_think` soft switch we append to the user turn (see `_PROMPT`) is a
 # directive, not content — but the model occasionally echoes it into the answer
-# ("…we too /no_think"). It never belongs in a translation, so strip any leaked
-# `/no_think` / `/think` marker from the output.
-_NOTHINK_MARK = re.compile(r"\s*/\s*(?:no[_ ]?)?think\b", re.IGNORECASE)
+# ("…we too /no_think"), and having been primed with a slash-command it also
+# INVENTS sibling tokens it was never given (`/no_response` seen leaking into an
+# H-scene line). None of these `/no_…` / `/think` markers belong in a translation,
+# so strip the whole family, not just the literal `/no_think`. Real EN never
+# contains a `/no_<word>` token, so `and/or`, `24/7`, etc. are unaffected.
+_NOTHINK_MARK = re.compile(r"\s*/\s*(?:no[_ ]?\w+|think)\b", re.IGNORECASE)
 # Wrapping quotes the model sometimes adds around the whole line despite the
 # instruction not to — only stripped when they enclose the entire output.
 _WRAPPED_QUOTES = re.compile(r'^\s*["“”「『\'](.*)["“”」』\']\s*$',
