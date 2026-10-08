@@ -45,6 +45,10 @@ fugashi>=1.3
 unidic-lite>=1.0.8
 jaconv>=0.3
 
+# Chinese output — Traditional->Simplified clean-up (translate/kana_zh.to_simplified).
+# Pure-Python OpenCC reimplementation, Apache-2.0. (zhconv was rejected: GPLv2+.)
+opencc-python-reimplemented>=0.1.7
+
 # Anki export — builds the .apkg (Anki Deck Package) with the standard library
 # only (sqlite3 + zipfile + json). No third-party dependency, so it adds no
 # license obligations to a commercial build. See anki_export.py.

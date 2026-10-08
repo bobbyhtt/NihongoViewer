@@ -108,6 +108,11 @@ class Api:
         # region/area boundary and abandons the rest of the in-progress frame so
         # the current one is processed next (see _force_retranslate).
         self._interrupt = threading.Event()
+        # Bumped on every translate-language change. A frame captures it at start;
+        # if it changed by the time the frame finishes, that frame's text was (at
+        # least partly) translated in the OLD language, so its skip-state is reset
+        # and the next tick re-translates it in the new one.
+        self._lang_gen = 0
         self._lock = threading.Lock()
 
         # Global hide/show hotkey — works even when our window isn't focused.
@@ -154,6 +159,25 @@ class Api:
         # Drop the per-area state too, so a new/moved area set is processed fresh
         # (and is re-sized to the new area count on the next tick).
         self._area_state = []
+
+    def _overlay_style_locked(self) -> dict:
+        """The overlay style from settings, adjusted for the target language.
+
+        Chinese output needs a Chinese font: the three fonts offered in the font
+        dropdown (Noto Sans JP, M PLUS Rounded 1c, Shippori Mincho) are missing
+        common Simplified characters (们 这 说 罗 萨 …) and would draw empty boxes,
+        so the bundled Noto Sans SC is used whenever the target is Chinese. It also
+        covers kana, so Duo mode's Japanese line still renders. Traditional Chinese
+        (zh-TW) gets Noto Sans TC: SC can draw most Traditional characters, but in
+        mainland glyph shapes that Taiwan readers notice. Caller holds the lock.
+        """
+        style = {k: self._settings[k] for k in config.STYLE_KEYS}
+        lang = str(self._settings.get("translate_lang", "en"))
+        if lang == "zh-TW":
+            style["font"] = "Noto Sans TC"
+        elif lang.startswith("zh"):
+            style["font"] = "Noto Sans SC"
+        return style
 
     def _area_pairs_locked(self) -> list:
         """The valid area pairs from settings (each with both rects). Holds lock.
@@ -352,6 +376,9 @@ class Api:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
         with self._lock:
+            # Apply the saved target language (read under the lock, so a dropdown
+            # change made while the model was loading isn't lost).
+            translator.set_target(self._settings.get("translate_lang", "en"))
             self._translator = translator
         return {"ok": True, "backend": translator.name}
 
@@ -638,7 +665,17 @@ class Api:
             if any(k in patch and patch[k] != self._settings.get(k)
                    for k in self._SOURCE_KEYS):
                 self._reset_frame_cache_locked()
+            lang_changed = ("translate_lang" in patch and
+                            patch["translate_lang"] != self._settings.get("translate_lang"))
             self._settings.update(patch)
+            if lang_changed:
+                # Switch the translator live, and drop the tiered-skip state so the
+                # text already on screen is re-translated now instead of staying in
+                # the old language until it changes (a static screen never would).
+                self._lang_gen += 1
+                self._reset_frame_cache_locked()
+                if self._translator is not None:
+                    self._translator.set_target(self._settings["translate_lang"])
 
         hotkey_result = self._rebind_hotkey(self._hotkey, "hotkey", new_hotkey)
         card_hotkey_result = self._rebind_hotkey(
@@ -788,7 +825,23 @@ class Api:
 
     # -- the pipeline ---------------------------------------------------------
     def process_frame(self, hwnd) -> dict:
-        """Capture -> OCR -> translate -> draw overlay. Returns {ja, en}."""
+        """Capture -> OCR -> translate -> draw overlay. Returns {ja, en}.
+
+        Wraps `_process_frame` with the translate-language guard: if the language
+        was switched while this frame was being translated, the result may be in
+        the old language, so the skip-state it just recorded is reset and the next
+        tick translates the same text again in the new language.
+        """
+        with self._lock:
+            gen = self._lang_gen
+        result = self._process_frame(hwnd)
+        with self._lock:
+            if self._lang_gen != gen:
+                self._reset_frame_cache_locked()
+        return result
+
+    def _process_frame(self, hwnd) -> dict:
+        """Capture -> OCR -> translate -> draw overlay (see `process_frame`)."""
         # Clear any stale "skip" flag up front: a press between ticks already reset
         # the cache (so this run reads the current frame), and this fresh run must
         # not abort itself on that leftover flag — only a press DURING this run,
@@ -797,7 +850,7 @@ class Api:
         with self._lock:
             engine = self._engine
             translator = self._translator
-            style = {k: self._settings[k] for k in config.STYLE_KEYS}
+            style = self._overlay_style_locked()
             text_mode = self._settings["text_mode"]
             mode = self._settings["capture_mode"]
             ocr_mode = self._settings["ocr_mode"]
@@ -1067,7 +1120,7 @@ class Api:
             # can't be undone. No-op once capture stopped or nothing is on screen.
             if not (self._capturing and self._overlay_enabled):
                 return
-            style = {k: self._settings[k] for k in config.STYLE_KEYS}
+            style = self._overlay_style_locked()
             text_mode = self._settings["text_mode"]
             if self._last_pairs and self._last_hwnd:  # screen mode — in-place boxes
                 self._draw_overlay(self._last_hwnd, self._last_pairs, style, text_mode)

@@ -36,7 +36,7 @@ ok=1
 for p in LICENSE THIRD_PARTY_LICENSES.md models/qwen/model.bin \
          unidic_lite/dicdir/char.bin unidic_lite/dicdir/matrix.bin \
          ocr/models/manga/encoder_model.onnx ocr/models/manga/decoder_model.onnx \
-         ocr/models/manga/vocab.txt \
+         ocr/models/manga/vocab.txt fonts/NotoSansSC.ttf fonts/NotoSansTC.ttf \
          Yakutori.exe; do
   if [ -e "$DIST/$p" ]; then echo "  OK  $p"; else echo "  MISSING  $p"; ok=0; fi
 done

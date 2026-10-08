@@ -110,6 +110,22 @@ body {
   gap: 14px;
 }
 
+/* Top row = CAPTURE | HOTKEY; SETTING spans the full width on the row below. */
+.panel.setting { grid-column: 1 / -1; }
+
+/* SETTING's own two columns: left = OCR mode / Translate Language / position / text
+   mode; right = font / size / colors / opacity. */
+/* Row-based grid: each row holds a left field and a right field, aligned to the
+   top (align-items: start) so their titles sit on the same horizontal line. The
+   20px row-gap provides the spacing between field groups. */
+.setting-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 20px;
+  align-items: start;
+}
+.setting-cell { min-width: 0; }
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -131,8 +147,13 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  /* Space below the header so the panel's content (Screen/Area toggle, OCR mode)
+     isn't cramped against the title. */
+  margin-bottom: 14px;
 }
 .panel-title-row .panel-title { margin-bottom: 0; }
+/* Group the title and its control together on the LEFT (SETTING's overlay toggle). */
+.panel-title-row.title-left { justify-content: flex-start; gap: 12px; }
 
 /* Overlay show/hide status toggle (clickable badge). */
 .overlay-toggle {
@@ -173,6 +194,7 @@ body {
   margin: 12px 0 6px;
 }
 .field-label:first-of-type { margin-top: 0; }
+
 
 /* Inputs */
 .input, select {
@@ -218,7 +240,6 @@ input[type="number"] { -moz-appearance: textfield; }
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 12px;
 }
 .no-preview { color: var(--muted); font-size: 13px; }
 #preview-img {
@@ -322,9 +343,9 @@ input[type="number"] { -moz-appearance: textfield; }
 /* Color swatch buttons (open the custom color picker) */
 .color-swatch {
   width: 100%;
-  height: 28px;
+  height: 37px; /* same height as the selects (Translate Language / Font) */
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   padding: 0;
   position: relative;
@@ -1181,7 +1202,7 @@ a.crumb:hover { color: var(--text); }
 #detail-hint { min-height: 0; margin-top: -4px; }
 
 @media (max-width: 720px) {
-  .main, .text-boxes { grid-template-columns: 1fr; }
+  .main, .text-boxes, .setting-grid { grid-template-columns: 1fr; }
   .create-grid { grid-template-columns: 1fr; }
 }
 

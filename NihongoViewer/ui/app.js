@@ -368,6 +368,7 @@ function currentSettings() {
     offset_y: Number(document.getElementById("offset-y").value) || 0,
     text_mode: activeTextMode(),
     ocr_mode: activeOcrMode(),
+    translate_lang: document.getElementById("translate-lang").value,
     capture_mode: activeCaptureMode(),
     // Only the committed combos; a freshly-captured one stays in its field until
     // Saved. Resent unchanged on style saves — the backend only rebinds on change.
@@ -386,6 +387,18 @@ function saveSettings() {
 // Any setting that affects the overlay saves the new value live. (Color swatches
 // persist through their own Save button — see the ColorPicker onSave above.)
 document.getElementById("font-select").addEventListener("change", saveSettings);
+document.getElementById("translate-lang").addEventListener("change", () => {
+  updateTranslatedTag();
+  saveSettings();
+});
+
+// The Text panel's "Translated (…)" label follows the Translate Language setting.
+const TRANSLATED_TAGS = { en: "Translated (EN)", "zh-CN": "Translated (ZH)", "zh-TW": "Translated (繁中)" };
+function updateTranslatedTag() {
+  const lang = document.getElementById("translate-lang").value;
+  document.getElementById("translated-tag").textContent =
+    TRANSLATED_TAGS[lang] || TRANSLATED_TAGS.en;
+}
 sizeSlider.addEventListener("change", saveSettings);
 opacitySlider.addEventListener("change", saveSettings);
 
@@ -545,6 +558,10 @@ function applySettings(s) {
   if (s.retranslate_hotkey) retranslateHotkeyField.applySaved(s.retranslate_hotkey);
   setTextModeButtons(s.text_mode);
   setOcrModeButtons(s.ocr_mode);
+  const langSelect = document.getElementById("translate-lang");
+  langSelect.value = s.translate_lang || "en";
+  if (!langSelect.value) langSelect.value = "en"; // saved lang no longer offered
+  updateTranslatedTag();
   setCaptureModeButtons(s.capture_mode || "screen");
   currentEngine = s.ocr_engine || currentEngine;
   currentSpeed = s.ocr_speed || currentSpeed;

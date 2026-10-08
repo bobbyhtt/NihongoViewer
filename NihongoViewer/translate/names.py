@@ -198,11 +198,55 @@ def _romaji(kana: str) -> str:
     return romaji[:1].upper() + romaji[1:] if romaji else kana
 
 
-def _load_overrides() -> dict:
+def _load_overrides(lang: str = "en") -> dict:
+    """`names.json` overrides for target language `lang`, as {japanese: name}.
+
+    A value may be a plain string — the original format, which pins the ENGLISH
+    name ("ボブ": "Bob") — or a per-language object
+    ("カズ": {"en": "Kazu", "zh-CN": "和真", "zh-TW": "和真"}). A plain-string pin is
+    English-only: it is NOT applied to Chinese, where an English name would land in
+    the middle of a Chinese sentence. zh-TW falls back to the zh-CN pin, so one
+    Chinese pin covers both scripts.
+    """
     global _overrides
     if _overrides is None:
-        _overrides = _load_json_map("names.json")
+        _overrides = _load_name_map("names.json")
+    if lang == "zh-TW":
+        return {k: v.get("zh-TW") or v["zh-CN"] for k, v in _overrides.items()
+                if "zh-TW" in v or "zh-CN" in v}
+    return {k: v[lang] for k, v in _overrides.items() if lang in v}
+
+
+def _load_name_map_cached() -> dict:
+    """`names.json` as {japanese: {lang: name}}, loaded once."""
+    global _overrides
+    if _overrides is None:
+        _overrides = _load_name_map("names.json")
     return _overrides
+
+
+def _load_name_map(filename: str) -> dict:
+    """Load `names.json` as {japanese: {lang: name}} ({} if absent / invalid)."""
+    try:
+        import config
+
+        path = config.path().with_name(filename)
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (FileNotFoundError, json.JSONDecodeError, OSError, ImportError):
+        return {}
+    out: dict = {}
+    if isinstance(data, dict):
+        for key, val in data.items():
+            if not key:
+                continue
+            if isinstance(val, str) and val:
+                out[str(key)] = {"en": val}
+            elif isinstance(val, dict):
+                langs = {str(l): str(n) for l, n in val.items() if l and n}
+                if langs:
+                    out[str(key)] = langs
+    return out
 
 
 def _load_glossary() -> dict:
@@ -367,7 +411,7 @@ def _is_headword(text: str) -> bool:
         return False
 
 
-def _label_name(text: str, overrides: dict) -> str | None:
+def _label_name(text: str, overrides: dict, to_name=None) -> str | None:
     """Romanize a bare katakana label (a character-name plate), or None to skip.
 
     Returns the romanized name with any surrounding punctuation kept, or None
@@ -397,7 +441,7 @@ def _label_name(text: str, overrides: dict) -> str | None:
             return None
         if _is_headword(core) or _has_predicate(core):
             return None      # a real word (コーヒー / スゴイ) — let the model translate
-        name = _romaji(core)
+        name = (to_name or _romaji)(core)
     # Re-attach whatever punctuation framed the plate, so "トワ、" keeps its comma.
     head, tail = text[:text.index(stripped)], text[text.index(stripped) + len(stripped):]
     return f"{head}{name}{tail}"
@@ -420,11 +464,48 @@ def _is_name_run(run: str) -> bool:
     return False
 
 
-def protect(text: str) -> str:
-    """Fix known-bad terms, romanize furigana readings and name-like katakana."""
+def _is_proper_noun_run(run: str) -> bool:
+    """True if the analyzer tags the run as a known proper noun (not just unknown)."""
+    tagger = _get_tagger()
+    if tagger is None:
+        return False
+    return any(getattr(tok.feature, "pos2", None) == _PROPER_NOUN
+               and not getattr(tok, "is_unk", False)
+               for tok in tagger(run))
+
+
+def protect(text: str, lang: str = "en", names_out: list | None = None) -> str:
+    """Prepare `text` for translation into `lang` so names survive.
+
+    English: fix known-bad terms, romanize furigana readings and name-like katakana.
+    Chinese: see `_protect_zh` (transliterate katakana names into hanzi instead).
+    `names_out`, if given, collects the Chinese name spellings inserted, so the
+    translator can restore them if the model "corrects" one (卢纳里亚 for 鲁纳里亚).
+    """
     if not text:
         return text
-    overrides = _load_overrides()
+    if lang == "zh-TW":
+        # zh-TW runs through the Simplified pipeline and is converted at the end
+        # (see translate.kana_zh.to_traditional_tw). A pin is fed in Simplified, and
+        # recorded as (simplified, exact pin) so the final step writes the pin back
+        # EXACTLY — a round trip through the converters would turn a pinned 里 into
+        # 裡 or 托 into 託. A zh-CN fallback pin is recorded as a name, so it gets the
+        # same name-safe conversion as a transliteration.
+        from .kana_zh import to_simplified
+
+        overrides = {}
+        for key, entry in (_load_name_map_cached()).items():
+            pin = entry.get("zh-TW")
+            cn = to_simplified(pin) if pin else entry.get("zh-CN")
+            if not cn:
+                continue
+            overrides[key] = cn
+            if names_out is not None and key in text:
+                names_out.append((cn, pin) if pin else cn)
+        return _protect_zh(text, overrides, names_out)
+    if lang.startswith("zh"):
+        return _protect_zh(text, _load_overrides(lang), names_out)
+    overrides = _load_overrides("en")
 
     # 0) Glossary: replace terms the model gets wrong with the correct English
     #    (any script — hiragana/kanji/katakana). Longest key first so a longer term
@@ -482,5 +563,165 @@ def protect(text: str) -> str:
         if tail and _is_inflected(run + tail.group(0)):
             return _to_hiragana(run)
         return _romaji(run) if _is_name_run(run) else run
+
+    return _KATAKANA_RUN.sub(katakana, text)
+
+
+# Titles that follow a NAME in fantasy / noble-romance fiction (most of the Syosetu
+# ranking): a katakana run right before one is a person or house, even when the
+# analyzer can't tell (ドーンカソ侯爵令息 — the model otherwise spelled it two ways).
+_NAME_TITLES_ZH = ("侯爵", "伯爵", "公爵", "男爵", "子爵", "辺境伯", "大公", "令嬢",
+                   "令息", "殿下", "陛下", "閣下", "王子", "王女", "皇子", "皇女", "姫",
+                   "卿", "嬢", "夫人", "家")
+
+
+def _kata_to_hira(run: str) -> str:
+    return "".join(chr(ord(c) - 0x60) if "ァ" <= c <= "ヶ" else c for c in run)
+
+
+# Rough second-person pronouns written in katakana; a run starting with one is
+# an insult/slang compound, never a name.
+_SLANG_PREFIXES_ZH = ("オメー", "テメー", "オマエ", "テメエ", "キサマ", "コイツ", "アイツ", "ソイツ")
+
+
+def _is_word_zh(run: str) -> bool:
+    """True if a katakana run is (a form of) a dictionary word, not a name.
+
+    Catches the slang/sound words syosetu testing turned into fake names: an
+    elongated word (ゴリラー), a word written in katakana for tone (オジサマ),
+    a verb stem (フザケ, チビリ), a mimetic (キリリ, ギョロ), and a compound of
+    two words (バナナゼリー, スーパーマッチョ).
+    """
+    if run.startswith(_SLANG_PREFIXES_ZH):
+        return True      # オメーポンギ "you Roppongi girl" — an insult, not a name
+    hira = _kata_to_hira(run)
+    trimmed = run.rstrip("ー")
+    forms = {run, trimmed, hira, _kata_to_hira(trimmed), hira + "る",
+             hira + "と", hira + "り", hira + "りと", hira * 2}
+    if any(_is_headword(f) for f in forms if f):
+        return True
+    return any(_is_headword(run[:i]) and _is_headword(run[i:])
+               for i in range(3, len(run) - 2))
+
+
+def _unknown_name_zh(run: str) -> bool:
+    """A katakana run the dictionary doesn't know is most likely a name.
+
+    Novels introduce dozens of names the analyzer has never seen (マイスナー,
+    ルナリア, ラグザス); leaving them to the model spelled the same character two
+    or three ways in one chapter. A non-word of 3+ morae is transliterated so the
+    spelling is fixed. Only when the dictionary is loaded (never guess blind);
+    sound effects ending in ッ and anything `_is_word_zh` recognizes stay with
+    the model.
+    """
+    if not _dictionary_ready():
+        return False
+    core = run.replace("ー", "")
+    if len(core) < 3 or run.endswith(("ッ", "ｯ", "ァ", "ィ", "ゥ", "ェ", "ォ")):
+        return False     # SFX / cries end on a small kana (ブヘェ), names don't
+    for unit in (1, 2):
+        # A repeated sound is a laugh or SFX (フフフフ, ドキドキ), never a name.
+        if len(core) >= 2 * unit and core == core[:unit] * (len(core) // unit) + core[:len(core) % unit]:
+            return False
+    return not _is_word_zh(_to_fullwidth(run))
+
+
+# Katakana runs already confirmed as names this session (see `_protect_zh`).
+_LEARNED_ZH: set[str] = set()
+
+
+def _protect_zh(text: str, overrides: dict, names_out: list | None = None) -> str:
+    """Name handling for Chinese output.
+
+    Tested approaches (Qwen3-4B, JA -> zh-CN):
+      * romaji names (the English path) -> the model invents a Chinese name
+        (Kazu -> 秋山) or leaves romaji in the Chinese ("Kasumi真的好可爱");
+      * raw katakana -> mostly sensible transliteration, but it still invents names
+        it doesn't know (ミナト -> 矿田), misreads some (ヤツシロ -> 那家伙, "that
+        guy"), and transliterates the same name differently per line
+        (アリサ -> 艾丽莎 / 阿里萨);
+      * transliterating katakana names OURSELVES with a fixed sound table
+        (`kana_zh`) -> no invented names, and the same name every time. Used here.
+
+    So: katakana names -> hanzi via `kata_to_zh` (a per-language `names.json` pin
+    wins); kanji names are left as kanji (a Chinese reader reads them directly);
+    furigana keeps the kanji and drops the reading (鬼戮(きりく) -> 鬼戮). The
+    English glossary is NOT applied — its replacements are English words.
+    """
+    from .kana_zh import kata_to_zh as _kata_to_zh
+
+    def kata_to_zh(run: str) -> str:
+        zh = _kata_to_zh(run)
+        if names_out is not None and zh:
+            names_out.append(zh)
+        return zh
+
+    # 0) Kanji-key overrides — direct substring replacement, longest first (as EN).
+    for key in sorted((k for k in overrides if _HAS_KANJI.search(k)),
+                      key=len, reverse=True):
+        if key in text:
+            text = text.replace(key, overrides[key])
+
+    # 0a) Fixed Chinese terms (グリフォン 狮鹫, 屋敷 宅邸) and katakana slang
+    #     pronouns (テメー -> 你) the model leaves as kana or renders differently
+    #     per line. Longest first; a names.json entry for the same key wins.
+    from .kana_zh import GLOSSARY_ZH, SLANG_YOU_ZH
+    for key in sorted(GLOSSARY_ZH, key=len, reverse=True):
+        if key in text and key not in overrides:
+            text = text.replace(key, GLOSSARY_ZH[key])
+    for key in SLANG_YOU_ZH:
+        text = re.sub(re.escape(key) + r"(?![ァ-ヺー])", "你", text)
+
+    # 達 after a katakana name is the plural (アルベルト達 "Albert and the others"),
+    # not part of the name — the model wrote 阿尔贝尔特达. Spell it as たち, which the
+    # honorific clean-up turns into 们.
+    text = re.sub(r"(?<=[ァ-ヺー])達", "たち", text)
+
+    # A lone 机 is "desk" in Japanese but "machine" in Chinese (机の上 -> 在机器上).
+    text = re.sub(r"(?<![一-龯])机(?![一-龯])", "桌子", text)
+
+    # 0b) A bare katakana line is a character-name plate.
+    label = _label_name(text, overrides, to_name=kata_to_zh)
+    if label is not None:
+        return label
+
+    # 1) Furigana: keep the kanji (or its override), drop the kana reading.
+    text = _FURIGANA.sub(lambda m: overrides.get(m.group(1), m.group(1)), text)
+
+    # 2) Katakana name runs -> Chinese transliteration.
+    def katakana(match: "re.Match") -> str:
+        run = match.group(0)
+        if run in overrides:
+            return overrides[run]
+        if run in _LEARNED_ZH:
+            return kata_to_zh(_to_fullwidth(run)) or run   # a name seen earlier
+        if run[0] in _KATA_NONINITIAL:
+            return run           # word fragment, never a name (see _KATA_NONINITIAL)
+        tail = _HIRAGANA_TAIL.match(text, match.end())
+        if tail and _is_inflected(run + tail.group(0)):
+            return run           # stylized verb stem (ムカつく) — leave for the model
+        # A katakana run right before a name honorific (ミナト+くん) is a person even
+        # when the analyzer doesn't tag it as a proper noun.
+        rest = text[match.end():]
+        before_honorific = (any(rest.startswith(h) for h in _NAME_HONORIFICS)
+                            or any(rest.startswith(t) for t in _NAME_TITLES_ZH)
+                            # "ヨーコ・レンボウ": katakana joined by ・ is a full name.
+                            or (rest[:1] == "・" and _KATAKANA_RUN.match(rest, 1) is not None)
+                            or text[:match.start()].endswith("・"))
+        # Stricter than the English path: only a dictionary PROPER NOUN counts on its
+        # own. `_is_name_run` also accepts any UNKNOWN word, which in Chinese turned
+        # katakana slang into fake names (オメーポンギ "you, Roppongi girl" -> 奥梅庞吉);
+        # romaji in English is harmless, a hanzi "name" is not. Unknown words are left
+        # for the model unless an honorific marks them as a person (ミナト+くん).
+        if before_honorific or _is_proper_noun_run(run) or _unknown_name_zh(run):
+            if before_honorific:
+                # Strong evidence (an honorific/title or ・ full name): remember it,
+                # so the same run alone later is still a name. インパチェンス・マーデン
+                # makes インパチェンス a name; alone it is also a dictionary word
+                # (the flower), which the model translated as 不可逆地 ("irreversibly").
+                if len(_LEARNED_ZH) < 2000:
+                    _LEARNED_ZH.add(run)
+            return kata_to_zh(_to_fullwidth(run)) or run
+        return run
 
     return _KATAKANA_RUN.sub(katakana, text)

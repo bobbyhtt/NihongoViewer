@@ -50,7 +50,53 @@ Screen Capture -> OCR -> Translation -> Display
    (`ヤツシロ` → `Yatsushiro`, not "you bitch"; loanwords like `コーヒー` are left alone),
    and a **furigana** term `漢字(かな)` is replaced by its romanized reading
    (`鬼戮(きりく)` → `Kiriku`) instead of the model echoing the untranslatable kanji, both
-   with a user `names.json` override in the config dir. Each **sentence** is a
+   with a user `names.json` override in the config dir. **Target language** is a setting
+   (`translate_lang`: `en` | `zh-CN` | `zh-TW`, `Translator.set_target`, caches keyed per language).
+   **zh-TW** (Taiwan Traditional) is produced exactly like zh-CN (same prompt, names,
+   glossary, guards — all of which work on Simplified text) and converted as the last
+   step (`kana_zh.to_traditional_tw`, OpenCC **s2tw**). Not s2twp: its IT-vocabulary
+   phrases broke prose (通过→透過, 文件→檔案, 连接→連線). Names are converted
+   character-wise keeping 里/托 (the converter wrote 貝爾裡內特); a `names.json`
+   `"zh-TW"` pin is written back exactly and otherwise falls back to the `"zh-CN"` pin.
+   For **Chinese**, romaji is wrong and raw katakana makes Qwen *invent* names
+   (カズ→秋山, ミナト→矿田) and rename the same character per line, so katakana names are
+   transliterated by a fixed sound table instead (`translate/kana_zh.py`, カズ→卡兹 — never
+   invented, always consistent); kanji names stay as kanji; the English glossary is
+   skipped. `names.json` values may be per-language (`"カズ": {"en": "Kazu", "zh-CN": "和真"}`);
+   a plain-string value is the English pin only. Chinese output is drawn in a bundled
+   **Noto Sans SC** (the JP fonts lack common Simplified characters) and cleaned by
+   `kana_zh.fix_zh_output` (leftover honorific kana → 酱/君/桑, Japanese-only kanji →
+   Simplified: 嶋→岛, 気→气); the English-only salvage passes are skipped for Chinese.
+   **Don't tune the Chinese prompt for individual mistranslations** (e.g. 任せて下さい→随便你啦):
+   tested Oct 2026 — adding a slang/intent rule fixed some lines, but the wins flipped when
+   the *same* sentence moved to a different spot in the prompt, and a "translate freely"
+   wording softened explicit lines (セックス→约会). At 4B, prompt tweaks reshuffle errors.
+   Fix specific terms deterministically instead (a glossary), like the English path does.
+   If a Chinese result still leaks kana or an English word not in the source
+   (`kana_zh.zh_leaked`), that one line is retried framed as `日语原文：「…」` — a
+   failure-only retry, so normal lines keep the normal prompt's exact output. Katakana
+   before a noble title (侯爵/令嬢/殿下…) or joined by ・ counts as a name; non-initial ル
+   transliterates as 尔 (阿尔贝尔) and フォン as 冯, per Chinese naming convention.
+   After 50 syosetu novels (Oct 2026), further deterministic Chinese guards: an unknown
+   katakana run of 3+ morae that is **not** a JMdict word (nor an elongated/hiragana/
+   verb-stem/mimetic form or two-word compound of one — `names._is_word_zh`) is treated
+   as a name, so novel-only names (ルナリア, ラグザス) get one fixed spelling; リ/レ map to
+   gender-neutral 里/莱; Western-style names end on a bare consonant (ガーランド 加兰德);
+   a zh term glossary (`kana_zh.GLOSSARY_ZH`: グリフォン 狮鹫, 屋敷 宅邸, 奥様 夫人…) is
+   substituted into the source; rank words (子爵/陛下…) and counts (十一) must survive
+   (`fix_titles`, `numbers_mismatch` → failure-only retry); output passes through
+   OpenCC t2s (Apache-2.0 — **zhconv is GPL, don't use it**); English words that
+   survive the retry are first translated on their own (`_english_runs_to`: "please call
+   me Lirian." -> 请叫我莉里安) and only then mapped or dropped (`scrub_leaks`); a transliterated name the
+   model respells by one character (卢纳里亚 for our 鲁纳里亚), shortens (斯巴 for 斯巴尔) or
+   swaps (西塞尔 for 塞西尔) is restored; katakana+達 is the plural (阿尔贝尔特们), and
+   fantasy staples are fixed terms (ゴーレム 魔像, ミスリル 秘银); a katakana run confirmed as a
+   name by strong evidence (honorific/title/・) is remembered for the session
+   (`names._LEARNED_ZH`), so インパチェンス alone stays a name, not 不可逆地; a count the
+   retry still gets wrong is swapped back when unambiguous (`fix_numbers`: 两亿八千万 ->
+   二千八百万 — 万/億 multiply the whole prefix)
+   (`restore_names`, fed by `protect(..., names_out)`); a word-initial consonant
+   cluster reads as one sound (グレン 格伦, クレア 克莱亚 — not before ル, so クルミ stays). Each **sentence** is a
    translation-and-cache unit (`cache.SentenceCache`, splitting on `。！？` only —
    never the `、` clause comma, so a sentence's clauses still reach the model
    together). This is **not** the old MADLAD per-clause split (which dropped

@@ -10,6 +10,10 @@ from abc import ABC, abstractmethod
 #: Sentence-ending marks (JP + ASCII) used when glossing a single word.
 _TERMINATORS = "。．.!?！？"
 
+#: Target languages a backend can translate Japanese into (config `translate_lang`).
+TARGET_LANGS = ("en", "zh-CN", "zh-TW")
+DEFAULT_TARGET = "en"
+
 
 def _tidy_gloss(text: str) -> str:
     """Collapse the repetition a sentence-MT model emits when padding a word.
@@ -49,10 +53,20 @@ def _tidy_gloss(text: str) -> str:
 
 
 class Translator(ABC):
-    """A selectable JA -> EN translation backend."""
+    """A selectable translation backend: Japanese -> `target_lang`."""
 
     #: Human-readable name shown in the UI / status row.
     name: str = "Translator"
+
+    #: Language translations are produced in (one of TARGET_LANGS).
+    target_lang: str = DEFAULT_TARGET
+
+    def set_target(self, lang: str) -> None:
+        """Switch the output language. Unknown codes fall back to the default.
+
+        Cheap and live (no weight reload); wrappers forward it to their backend.
+        """
+        self.target_lang = lang if lang in TARGET_LANGS else DEFAULT_TARGET
 
     @abstractmethod
     def load(self) -> None:
@@ -60,7 +74,7 @@ class Translator(ABC):
 
     @abstractmethod
     def translate(self, text: str) -> str:
-        """Translate Japanese `text` to English ("" for empty input)."""
+        """Translate Japanese `text` into `target_lang` ("" for empty input)."""
 
     def translate_word(self, text: str) -> str:
         """Translate a single vocabulary word/term to a concise gloss.
@@ -82,11 +96,14 @@ class Translator(ABC):
         if not core:
             return ""
         # 1) Dictionary-first (best-effort, non-blocking — see dictionary.gloss).
-        try:
-            from . import dictionary
-            gloss = dictionary.gloss(core)
-        except Exception:
-            gloss = ""
+        #    JMdict glosses are English, so this only applies to English output.
+        gloss = ""
+        if self.target_lang == "en":
+            try:
+                from . import dictionary
+                gloss = dictionary.gloss(core)
+            except Exception:
+                gloss = ""
         # 2) Not a headword — let the model gloss it (the glossary in names.protect
         #    still corrects terms the model mangles, e.g. パイスリ -> "breast rubbing").
         if not gloss:

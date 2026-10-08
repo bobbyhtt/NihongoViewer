@@ -35,6 +35,7 @@ a component's own license.
 | fugashi | ≥1.3 | MIT | MeCab wrapper |
 | unidic-lite | ≥1.0.8 | MIT / WTFPL; bundles UniDic 2.1.2 data (© UniDic Consortium), released under the GPL, the LGPL, or the BSD License at the licensee's option — Yakutori elects the **BSD License** | Japanese morphological dictionary |
 | jaconv | ≥0.3 | MIT | Kana ↔ romaji conversion |
+| opencc-python-reimplemented | ≥0.1.7 | Apache-2.0 | Traditional → Simplified Chinese clean-up |
 | bottle | (transitive) | MIT | HTTP server used by the pywebview shell |
 | Jinja2 | (transitive) | BSD 3-Clause | Templating (pywebview) |
 | MarkupSafe | (transitive) | BSD 3-Clause | String escaping (Jinja2) |
@@ -55,6 +56,8 @@ All bundled fonts are licensed under the **SIL Open Font License, Version 1.1**
 | Noto Sans JP | google/fonts | `fonts/NotoSansJP-OFL.txt` |
 | M PLUS Rounded 1c | google/fonts | OFL-1.1 |
 | Shippori Mincho | google/fonts | `fonts/ShipporiMincho-OFL.txt` |
+| Noto Sans SC | google/fonts (© Adobe, Reserved Font Name "Source") | `fonts/NotoSansSC-OFL.txt` |
+| Noto Sans TC | google/fonts (© Adobe, Reserved Font Name "Source") | `fonts/NotoSansTC-OFL.txt` |
 
 ## 3. Machine-learning models (bundled)
 

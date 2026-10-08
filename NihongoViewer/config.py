@@ -25,6 +25,9 @@ DEFAULTS: dict = {
     "ocr_mode": "horizontal",       # OCR reading direction: "horizontal" | "vertical" (縦書き).
                                     # Horizontal = RapidOCR (whole frame). Vertical = manga-ocr
                                     # (recognition-only), which only takes effect in Area mode.
+    "translate_lang": "en",         # target translation language: "en" | "zh-CN" | "zh-TW". Source is
+                                    # always Japanese. Applied live via Translator.set_target
+                                    # (see Api.update_settings / load_translator).
     "hotkey": "Alt+V",              # global hide/show overlay hotkey
     "card_hotkey": "Alt+C",         # global "capture into Create-card stack" hotkey
     "retranslate_hotkey": "Alt+F",  # global "skip the busy frame, translate the current one"

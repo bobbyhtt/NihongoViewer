@@ -32,33 +32,47 @@ class FuzzyCache(Translator):
         self._inner = inner
         self._threshold = threshold
         self._capacity = capacity
-        # normalized source -> translation, most-recently-used last.
-        self._cache: "OrderedDict[str, str]" = OrderedDict()
+        # (target language, normalized source) -> translation, most-recently-used
+        # last. Keyed by language so switching EN <-> ZH never serves the other
+        # language's cached line, and switching back is still instant.
+        self._cache: "OrderedDict[tuple[str, str], str]" = OrderedDict()
 
     @property
     def name(self) -> str:
         return self._inner.name
 
+    def set_target(self, lang: str) -> None:
+        super().set_target(lang)
+        self._inner.set_target(lang)
+
     def load(self) -> None:
         self._inner.load()
 
     def translate(self, text: str) -> str:
-        key = _normalize(text)
-        if not key:
+        src = _normalize(text)
+        if not src:
             return ""
+        lang = self.target_lang
+        key = (lang, src)
 
         # 1) Exact (normalized) hit.
         if key in self._cache:
             self._cache.move_to_end(key)
             return self._cache[key]
 
-        # 2) Fuzzy hit against recent sources (newest first — dialogue is local).
+        # 2) Fuzzy hit against recent sources of the SAME language (newest first —
+        #    dialogue is local).
         for cached_key in reversed(self._cache):
-            if SequenceMatcher(None, key, cached_key).ratio() >= self._threshold:
+            if (cached_key[0] == lang and
+                    SequenceMatcher(None, src, cached_key[1]).ratio() >= self._threshold):
                 return self._cache[cached_key]
 
-        # 3) Miss — translate and remember.
+        # 3) Miss — translate and remember. If the language was switched while the
+        #    model was generating, the result may be in the old language: return it
+        #    (the caller re-runs the frame) but don't cache it under either key.
         result = self._inner.translate(text)
+        if self.target_lang != lang:
+            return result
         self._cache[key] = result
         self._cache.move_to_end(key)
         while len(self._cache) > self._capacity:
@@ -95,6 +109,10 @@ class SentenceCache(Translator):
     def name(self) -> str:
         return self._inner.name
 
+    def set_target(self, lang: str) -> None:
+        super().set_target(lang)
+        self._inner.set_target(lang)
+
     def load(self) -> None:
         self._inner.load()
 
@@ -105,4 +123,6 @@ class SentenceCache(Translator):
         if len(sentences) <= 1:
             return self._inner.translate(text)
         parts = (self._inner.translate(s) for s in sentences)
-        return " ".join(p.strip() for p in parts if p and p.strip())
+        # Chinese doesn't put spaces between sentences; English does.
+        sep = "" if self.target_lang.startswith("zh") else " "
+        return sep.join(p.strip() for p in parts if p and p.strip())

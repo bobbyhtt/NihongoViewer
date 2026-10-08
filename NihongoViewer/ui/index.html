@@ -58,7 +58,10 @@
         <main class="main">
           <!-- CAPTURE -->
           <section class="panel capture">
-            <h2 class="panel-title">CAPTURE</h2>
+            <div class="panel-title-row">
+              <h2 class="panel-title">CAPTURE</h2>
+              <a class="link" href="#" id="configure-ocr">⚙ Configure OCR</a>
+            </div>
             <!-- Capture mode: Screen reads the whole window; Area reads only a
                  user-defined rectangle and shows the translation in a fixed box. -->
             <div class="toggle-group capture-mode-row" id="capture-mode">
@@ -81,28 +84,11 @@
               <span class="no-preview" id="no-preview">No preview</span>
               <img id="preview-img" alt="Window preview" hidden />
             </div>
-            <a class="link" href="#" id="configure-ocr">⚙ Configure OCR</a>
           </section>
 
-          <!-- SETTING -->
-          <section class="panel setting">
-            <div class="panel-title-row">
-              <h2 class="panel-title">SETTING</h2>
-              <!-- Live overlay status + click-to-toggle (mirrors the hide/show
-                   hotkey). Disabled until capture starts, since there's no
-                   overlay to show/hide otherwise. -->
-              <button class="overlay-toggle" id="overlay-toggle" type="button"
-                      disabled title="Show or hide the translation overlay">
-                <span class="overlay-dot"></span>
-                <span id="overlay-toggle-label">Overlay off</span>
-              </button>
-            </div>
-
-            <label class="field-label" title="Reading direction the OCR expects. Vertical (縦書き) is for manga and some visual novels.">OCR mode</label>
-            <div class="toggle-group" id="ocr-mode" data-group="ocrmode">
-              <button class="toggle active" data-ocrmode="horizontal">Horizontal</button>
-              <button class="toggle" data-ocrmode="vertical">Vertical</button>
-            </div>
+          <!-- HOTKEY (global hotkeys; moved out of SETTING into their own panel) -->
+          <section class="panel hotkey">
+            <h2 class="panel-title">HOTKEY</h2>
 
             <label class="field-label">Hide / show hotkey</label>
             <div class="hotkey-row">
@@ -127,54 +113,98 @@
               <button class="btn hotkey-save" id="retranslate-hotkey-save" disabled>Save</button>
             </div>
             <span class="field-hint" id="retranslate-hotkey-status"></span>
+          </section>
 
-            <div class="row">
-              <div class="col">
-                <label class="field-label">Font</label>
-                <select id="font-select">
-                  <option>Noto Sans JP</option>
-                  <option>M PLUS Rounded 1c</option>
-                  <option>Shippori Mincho</option>
+          <!-- SETTING -->
+          <section class="panel setting">
+            <div class="panel-title-row title-left">
+              <h2 class="panel-title">SETTING</h2>
+              <!-- Live overlay status + click-to-toggle (mirrors the hide/show
+                   hotkey). Disabled until capture starts, since there's no
+                   overlay to show/hide otherwise. -->
+              <button class="overlay-toggle" id="overlay-toggle" type="button"
+                      disabled title="Show or hide the translation overlay">
+                <span class="overlay-dot"></span>
+                <span id="overlay-toggle-label">Overlay off</span>
+              </button>
+            </div>
+
+            <!-- Row-based grid: each row = [left field | right field] so the field
+                 titles line up on the same horizontal line across both columns. -->
+            <div class="setting-grid">
+              <!-- Row 1: OCR mode | Font + Size -->
+              <div class="setting-cell">
+                <label class="field-label" title="Reading direction the OCR expects. Vertical (縦書き) is for manga and some visual novels.">OCR mode</label>
+                <div class="toggle-group" id="ocr-mode" data-group="ocrmode">
+                  <button class="toggle active" data-ocrmode="horizontal">Horizontal</button>
+                  <button class="toggle" data-ocrmode="vertical">Vertical</button>
+                </div>
+              </div>
+              <div class="setting-cell">
+                <div class="row">
+                  <div class="col">
+                    <label class="field-label">Font</label>
+                    <select id="font-select">
+                      <option>Noto Sans JP</option>
+                      <option>M PLUS Rounded 1c</option>
+                      <option>Shippori Mincho</option>
+                    </select>
+                  </div>
+                  <div class="col">
+                    <label class="field-label">Size <span id="size-val">14</span>pt</label>
+                    <input class="slider" type="range" min="8" max="48" value="14" id="size-slider" />
+                  </div>
+                </div>
+              </div>
+
+              <!-- Row 2: Translate Language | Text color + Background -->
+              <div class="setting-cell">
+                <label class="field-label" title="Language to translate into. The source language is always Japanese.">Translate Language</label>
+                <select id="translate-lang">
+                  <option value="en">English</option>
+                  <option value="zh-CN">简体中文 (Simplified Chinese)</option>
+                  <option value="zh-TW">繁體中文 (Traditional Chinese)</option>
                 </select>
               </div>
-              <div class="col">
-                <label class="field-label">Size <span id="size-val">14</span>pt</label>
-                <input class="slider" type="range" min="8" max="48" value="14" id="size-slider" />
-              </div>
-            </div>
-
-            <div class="row">
-              <div class="col">
-                <label class="field-label">Text color</label>
-                <button class="color-swatch" type="button" id="text-color"
-                        data-value="#ffffff" aria-label="Text color"></button>
-              </div>
-              <div class="col">
-                <label class="field-label">Background</label>
-                <button class="color-swatch" type="button" id="bg-color"
-                        data-value="#111111" aria-label="Background color"></button>
-              </div>
-            </div>
-
-            <label class="field-label">Opacity <span id="opacity-val">80</span>%</label>
-            <input class="slider" type="range" min="0" max="100" value="80" id="opacity-slider" />
-
-            <div class="row">
-              <div class="col">
-                <label class="field-label">Position offset X/Y (px)</label>
-                <div class="row tight">
-                  <input class="input" type="number" value="0" step="1" id="offset-x"
-                         placeholder="X" title="Horizontal offset in pixels (+right / −left)" />
-                  <input class="input" type="number" value="0" step="1" id="offset-y"
-                         placeholder="Y" title="Vertical offset in pixels (+up / −down)" />
+              <div class="setting-cell">
+                <div class="row">
+                  <div class="col">
+                    <label class="field-label">Text color</label>
+                    <button class="color-swatch" type="button" id="text-color"
+                            data-value="#ffffff" aria-label="Text color"></button>
+                  </div>
+                  <div class="col">
+                    <label class="field-label">Background</label>
+                    <button class="color-swatch" type="button" id="bg-color"
+                            data-value="#111111" aria-label="Background color"></button>
+                  </div>
                 </div>
               </div>
-              <div class="col">
-                <label class="field-label">Text mode</label>
-                <div class="toggle-group" id="text-mode" data-group="mode">
-                  <button class="toggle active" data-mode="single">Single</button>
-                  <button class="toggle" data-mode="duo">Duo</button>
+
+              <!-- Row 3: Position offset + Text mode | Opacity -->
+              <div class="setting-cell">
+                <div class="row">
+                  <div class="col">
+                    <label class="field-label">Position offset X/Y (px)</label>
+                    <div class="row tight">
+                      <input class="input" type="number" value="0" step="1" id="offset-x"
+                             placeholder="X" title="Horizontal offset in pixels (+right / −left)" />
+                      <input class="input" type="number" value="0" step="1" id="offset-y"
+                             placeholder="Y" title="Vertical offset in pixels (+up / −down)" />
+                    </div>
+                  </div>
+                  <div class="col">
+                    <label class="field-label">Text mode</label>
+                    <div class="toggle-group" id="text-mode" data-group="mode">
+                      <button class="toggle active" data-mode="single">Single</button>
+                      <button class="toggle" data-mode="duo">Duo</button>
+                    </div>
+                  </div>
                 </div>
+              </div>
+              <div class="setting-cell">
+                <label class="field-label">Opacity <span id="opacity-val">80</span>%</label>
+                <input class="slider" type="range" min="0" max="100" value="80" id="opacity-slider" />
               </div>
             </div>
           </section>
@@ -195,7 +225,7 @@
               <p class="jp" id="detected-ja">今日はいい天気ですね。</p>
             </div>
             <div class="text-box">
-              <span class="text-tag">Translated (EN)</span>
+              <span class="text-tag" id="translated-tag">Translated (EN)</span>
               <p class="en" id="translated-en">The weather is nice today, isn't it.</p>
             </div>
           </div>
@@ -492,7 +522,7 @@
           <div class="about-meta">
             <span>© 2026 Tanachot Srisombat (Chottosoft). All rights reserved.</span>
             <span>Licensed under the Yakutori End User License Agreement.</span>
-            <a class="link" href="mailto:tanachot.yakutori@gmail.com">tanachot.yakutori@gmail.com</a>
+            <a class="link" href="mailto:chottosoft@gmail.com">chottosoft@gmail.com</a>
           </div>
         </section>
 
@@ -519,6 +549,7 @@
                 <li><span class="lic-name">OpenCV</span><span class="lic-desc">Image processing</span><span class="lic-badge">Apache-2.0</span></li>
                 <li><span class="lic-name">fugashi + UniDic</span><span class="lic-desc">Japanese tokenizer &amp; dictionary</span><span class="lic-badge">MIT · BSD</span></li>
                 <li><span class="lic-name">jaconv</span><span class="lic-desc">Kana ↔ romaji conversion</span><span class="lic-badge">MIT</span></li>
+                <li><span class="lic-name">OpenCC (Python)</span><span class="lic-desc">Traditional → Simplified Chinese</span><span class="lic-badge">Apache-2.0</span></li>
                 <li><span class="lic-name">JMdict / JMnedict</span><span class="lic-desc">Read Mode dictionary · EDRDG (via jmdict-simplified)</span><span class="lic-badge amber">CC BY-SA 4.0</span></li>
               </ul>
             </div>
@@ -541,6 +572,8 @@
                 <li><span class="lic-name">Noto Sans JP</span><span class="lic-desc">Google Fonts</span><span class="lic-badge">OFL-1.1</span></li>
                 <li><span class="lic-name">M PLUS Rounded 1c</span><span class="lic-desc">Google Fonts</span><span class="lic-badge">OFL-1.1</span></li>
                 <li><span class="lic-name">Shippori Mincho</span><span class="lic-desc">Google Fonts</span><span class="lic-badge">OFL-1.1</span></li>
+                <li><span class="lic-name">Noto Sans SC</span><span class="lic-desc">Google Fonts · Chinese overlay text</span><span class="lic-badge">OFL-1.1</span></li>
+                <li><span class="lic-name">Noto Sans TC</span><span class="lic-desc">Google Fonts · Traditional Chinese overlay text</span><span class="lic-badge">OFL-1.1</span></li>
               </ul>
             </div>
           </div>

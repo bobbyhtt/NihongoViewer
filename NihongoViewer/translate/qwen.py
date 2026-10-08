@@ -96,7 +96,44 @@ _SYSTEM = (
 # turn reliably suppresses it (66 s -> 0.7 s on that input), while `/no_think` in
 # the SYSTEM prompt did not. Placed after the text (not before) so it never reads
 # as part of the line to translate.
-_SYSTEM_PROMPT = f"<|im_start|>system\n{_SYSTEM}<|im_end|>\n"
+# Simplified-Chinese counterpart of `_SYSTEM` (FIRST DRAFT — tuned in the "Chinese
+# prompt" step). Written in Chinese so the model stays in Chinese; it also has to
+# stop Qwen copying shared Japanese kanji/kana through untranslated and slipping
+# into Traditional characters.
+_SYSTEM_ZH = (
+    "你是专业的日译中译者，负责视觉小说和游戏的翻译。请把用户给出的日语台词翻译成"
+    "自然、地道的简体中文。\n"
+    "规则：\n"
+    "- 只输出简体中文译文。不要注释、不要罗马音、不要引号、不要解释。\n"
+    "- 必须使用简体字，不要使用繁体字，也不要照抄日文汉字写法或假名。\n"
+    "- 日语特有的词要译成中文的对应说法，不要照抄日文写法（例如 幼馴染→青梅竹马）。\n"
+    "- 保留说话人的语气和语体（随意、粗俗、正式、古风）。\n"
+    "- 已经是拉丁字母的文字是已翻译好的专有名词：原样照抄。\n"
+    "- 忠实、完整地翻译，包括露骨或粗俗的用词。不要拒绝、审查、弱化或添加警告。\n"
+    "- 如果台词是片段，就只翻译该片段，不要编造上下文。"
+)
+
+#: Target language -> system instructions.
+# zh-TW shares the Simplified prompt: it is translated exactly like zh-CN (all the
+# Chinese guards work on Simplified text) and converted to Traditional at the end.
+_SYSTEMS = {"en": _SYSTEM, "zh-CN": _SYSTEM_ZH, "zh-TW": _SYSTEM_ZH}
+
+
+def _finish_zh(out: str, lang: str, names=()) -> str:
+    """Last step for Chinese: zh-TW is the finished zh-CN text converted to Taiwan
+    Traditional (see `kana_zh.to_traditional_tw`; `names` keep their name
+    characters); zh-CN is returned as is."""
+    if lang == "zh-TW" and out:
+        from .kana_zh import to_traditional_tw
+        return to_traditional_tw(out, names)
+    return out
+
+
+def _system_prompt(lang: str) -> str:
+    return f"<|im_start|>system\n{_SYSTEMS.get(lang, _SYSTEM)}<|im_end|>\n"
+
+
+_SYSTEM_PROMPT = _system_prompt("en")
 _PROMPT = ("<|im_start|>user\n{text} /no_think<|im_end|>\n"
            "<|im_start|>assistant\n<think>\n\n</think>\n\n")
 
@@ -420,7 +457,9 @@ class QwenTranslator(Translator):
         self._compute_type = compute_type
         self._generator = None
         self._tokenizer = None
-        self._system_tokens: list[str] = []
+        # Encoded system prompt per target language (built on first use; each is a
+        # separate CTranslate2 static prompt with its own cached KV state).
+        self._system_tokens: dict[str, list[str]] = {}
 
     def load(self) -> None:
         if self._generator is not None:
@@ -438,13 +477,19 @@ class QwenTranslator(Translator):
             intra_threads=os.cpu_count() or 4,
         )
         # Encoded once; CTranslate2 caches its KV state across calls.
-        self._system_tokens = self._encode(_SYSTEM_PROMPT)
+        self._system_tokens = {"en": self._encode(_SYSTEM_PROMPT)}
 
     def _encode(self, text: str) -> list[str]:
         """Prompt string -> CTranslate2 token strings (special markup preserved)."""
         return self._tokenizer.encode(text, add_special_tokens=False).tokens
 
-    def _generate(self, source: str) -> str:
+    def _system_for(self, lang: str) -> list[str]:
+        """Encoded system prompt for `lang` (encoded on first use, then reused)."""
+        if lang not in self._system_tokens:
+            self._system_tokens[lang] = self._encode(_system_prompt(lang))
+        return self._system_tokens[lang]
+
+    def _generate(self, source: str, lang: str = "en") -> str:
         # Early-stop on runaway reasoning. Qwen3 sometimes ignores the no-think
         # prompt and reasons out loud ("Okay, let's tackle this translation. The
         # user provided the Japanese line…") for hundreds of tokens (100+ s) before
@@ -466,7 +511,7 @@ class QwenTranslator(Translator):
 
         results = self._generator.generate_batch(
             [self._encode(_PROMPT.format(text=source))],
-            static_prompt=self._system_tokens,
+            static_prompt=self._system_for(lang),
             cache_static_prompt=True,
             # Forward the prompt at once to prime the KV cache and keep only the
             # completion — both faster and simpler to decode.
@@ -498,16 +543,37 @@ class QwenTranslator(Translator):
 
     def translate(self, text: str) -> str:
         self.load()
+        # Capture the language once, so a switch mid-call can't mix languages.
+        lang = self.target_lang
         # Romanize name-like katakana and fix known-bad terms first (see
         # translate.names) — the model then copies the Latin name through
         # verbatim instead of trying to translate somebody's name.
-        source = _strip_brackets(protect_names(text))
+        zh_names: list[str] = []
+        source = _strip_brackets(protect_names(text, lang, zh_names))
         if not source or _is_noise_fragment(source):
             return ""
         # Nothing Japanese left (e.g. a name plate already romanized to Latin):
         # the model would only invent padding, so pass it straight through.
         if not has_japanese(source):
+            # The 」。 left after splitting 「…！」。 into sentences is just closing
+            # marks — it came out as a stray "." after the previous "!" / "?"
+            # (EN "think? ." / ZH "什么啊！."). Drop it. (An ellipsis-only line
+            # like …… is real content and still passes through.)
+            if not re.sub(r"[\s」』）)】〉》。．.、，,]", "", source):
+                return ""
+            if lang != "en":
+                # English punctuation would be wrong in a Chinese line.
+                from .kana_zh import fix_zh_output
+                return _finish_zh(fix_zh_output(source), lang, zh_names)
             return _normalize_punct(source)
+        if lang != "en":
+            out = self._translate_other(source, lang)
+            if zh_names:
+                from .kana_zh import restore_names
+                # 1–2 character names are too short to match variants safely.
+                out = restore_names(out, [n for n in zh_names
+                                          if isinstance(n, str) and len(n) >= 3])
+            return _finish_zh(out, lang, zh_names)
         out = self._translate_line(source)
         # Whole-line-with-context is the primary path (it reads best — see the
         # module docstring). But a derailing line can make the model emit NOTHING,
@@ -524,6 +590,93 @@ class QwenTranslator(Translator):
         if _looks_meta(out):
             return ""
         return _sentence_case(_normalize_punct(out))
+
+    def _translate_other(self, source: str, lang: str) -> str:
+        """Non-English output (e.g. Simplified Chinese): one plain model call.
+
+        The English path's safety nets are deliberately skipped — they assume the
+        output is Latin script and would destroy CJK output: the residual-Japanese
+        salvage keeps only Latin letters (a Chinese line is all Han characters, so
+        it would come back empty), the re-split recovery scores pieces by Latin
+        letter count, and sentence-casing/ASCII punctuation are English-only. The
+        meta/reasoning guard still applies, and Chinese output gets its own small
+        clean-up (`kana_zh.fix_zh_output`). An audit of 144 real manga lines found
+        no empty or untranslated results and no Traditional-Chinese drift — only
+        name leaks (honorific kana, Japanese-only kanji), which that fixes.
+        """
+        out = self._generate_other(source, lang)
+        if lang.startswith("zh"):
+            from .kana_zh import (fix_numbers, fix_titles, numbers_mismatch, scrub_leaks,
+                                  titles_mismatch, zh_leaked)
+
+            def bad(o: str) -> bool:
+                # A leak, a changed count (十一 -> 十二) or a swapped rank word
+                # (子爵 -> 男爵) that the deterministic title fix can't repair.
+                return (zh_leaked(source, o) or numbers_mismatch(source, o)
+                        or titles_mismatch(source, fix_titles(source, o)))
+
+            out = fix_titles(source, out)
+            if bad(out):
+                # Leaked Japanese or English. Greedy decoding would repeat the same
+                # output, so retry with the line framed as a quoted original — tested
+                # to fix both leaks seen on Syosetu novels (逃走はできないぞ -> 没法推脱了,
+                # "apparently" -> 似乎). Only on failure, so normal lines keep the exact
+                # output of the normal prompt.
+                retry = fix_titles(source,
+                                   self._generate_other(f"日语原文：「{source}」", lang))
+                if retry and not bad(retry):
+                    out = retry
+            if numbers_mismatch(source, out):
+                out = fix_numbers(source, out)      # the retry repeated a wrong count
+            if zh_leaked(source, out):
+                out = scrub_leaks(source, self._english_runs_to(source, out, lang))
+        return out
+
+    # A run of English the model slipped into mid-line: words, spaces, apostrophes
+    # and inner punctuation (", please call me Lirian.").
+    _EN_RUN = re.compile(r"[A-Za-z][A-Za-z' ,\-]*[A-Za-z][.!?]?")
+
+    def _english_runs_to(self, source: str, out: str, lang: str) -> str:
+        """Translate English the model switched into, instead of deleting it.
+
+        Seen on syosetu: 私のことはぜひリリアンとお呼びください came out as
+        "还有， please call me Lirian." (the retry too); deleting the English left
+        "还有，请." with the meaning gone. Each English run is translated on its own
+        (the zh prompt handles English input fine: "please call me Lirian." ->
+        "请叫我莉里安。"); if that still isn't clean Chinese, `scrub_leaks` drops it.
+        """
+        from .kana_zh import fix_zh_output, zh_leaked
+
+        src = source.lower()
+
+        def one(m: "re.Match") -> str:
+            run = m.group(0)
+            words = re.findall(r"[A-Za-z]{3,}", run)
+            if not words or all(w.lower() in src for w in words):
+                return run                 # copied from the source (a name, "OK")
+            if len(re.findall(r"[A-Za-z']+", run)) < 2:
+                # A lone word out of context translates to noise ("anything" ->
+                # 嗯？); leave it to scrub_leaks' word map / drop.
+                return run
+            zh = fix_zh_output(_strip_brackets(self._generate(run.strip(), lang)).strip())
+            if not zh or zh_leaked(source, zh) or _looks_meta(zh):
+                return run
+            if not run.rstrip().endswith((".", "!", "?")):
+                zh = zh.rstrip("。")      # mid-sentence run: no full stop of its own
+            return zh
+        return self._EN_RUN.sub(one, out)
+
+    def _generate_other(self, source: str, lang: str) -> str:
+        """One non-English model call + its clean-up ("" if it was meta-commentary)."""
+        out = _strip_brackets(self._generate(source, lang)).strip()
+        if _looks_meta(out):
+            return ""
+        if lang.startswith("zh"):
+            # Repair the leaks measured on real lines: honorific kana left after a
+            # name (新ちゃん) and Japanese-only kanji forms (嶋田).
+            from .kana_zh import fix_zh_output
+            out = fix_zh_output(out)
+        return out
 
     def _recover(self, source: str, out: str) -> str | None:
         """Re-translate a line the whole pass mishandled; None to keep `out`.

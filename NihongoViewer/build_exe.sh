@@ -66,6 +66,8 @@ cd "C:/Users/bobby/Documents/NihongoViewer/NihongoViewer" || exit 1
   --include-package=unidic_lite \
   --include-package-data=unidic_lite \
   --include-package=jaconv \
+  --include-package=opencc \
+  --include-package-data=opencc \
   --output-dir=build \
   --output-filename=Yakutori.exe \
   main.py

@@ -143,11 +143,15 @@ user32.SetWindowDisplayAffinity.restype = wintypes.BOOL
 user32.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
 
 
-#: Overlay font families offered in the UI — all bundled, OFL, and JP+Latin.
+#: Bundled overlay font files (all OFL). The first three are offered in the UI.
 _BUNDLED = {
     "Noto Sans JP": str(_FONTS_DIR / "NotoSansJP.ttf"),          # variable -> Regular
     "M PLUS Rounded 1c": str(_FONTS_DIR / "MPLUSRounded1c-Regular.ttf"),
     "Shippori Mincho": str(_FONTS_DIR / "ShipporiMincho-Regular.ttf"),
+    # Simplified Chinese (variable -> Regular). Not in the font dropdown: it is
+    # selected automatically when the translate language is Chinese (main.py).
+    "Noto Sans SC": str(_FONTS_DIR / "NotoSansSC.ttf"),
+    "Noto Sans TC": str(_FONTS_DIR / "NotoSansTC.ttf"),
 }
 
 
@@ -183,6 +187,14 @@ def _hex_to_rgb(value: str) -> tuple[int, int, int]:
     return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
 
 
+# CJK typesetting rule (kinsoku / 避头点): these may not START a line — closing
+# punctuation, small kana and the long-vowel mark stay with the text before them. When
+# a hard break would put one at a line start, it hangs at the end of the previous line
+# instead (a few pixels past the width), which is how Chinese/Japanese books do it.
+_NO_LINE_START = set("，。、．！？：；」』）】〕〉》”’…‥ー～"
+                     "ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮ,.!?:;)]}")
+
+
 def _wrap_to_width(text: str, font, max_width: int, probe: ImageDraw.ImageDraw) -> str:
     """Wrap `text` so no line exceeds `max_width` pixels in `font`.
 
@@ -205,6 +217,8 @@ def _wrap_to_width(text: str, font, max_width: int, probe: ImageDraw.ImageDraw) 
             elif last_space >= 0:
                 out.append(cur[:last_space])  # break at the last space
                 cur, last_space = cur[last_space + 1:] + ch, -1
+            elif ch in _NO_LINE_START:
+                cur += ch            # CJK rule: closing punctuation hangs on this line
             else:
                 out.append(cur)      # nowhere to break (CJK) -> hard break
                 cur = ch
