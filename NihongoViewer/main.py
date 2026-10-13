@@ -177,6 +177,12 @@ class Api:
             style["font"] = "Noto Sans TC"
         elif lang.startswith("zh"):
             style["font"] = "Noto Sans SC"
+        # Manga mode (vertical OCR) + Chinese: draw the translation vertically like
+        # the original (overlay.render_vertical_image). Not in Duo mode — its
+        # Japanese-over-Chinese pair stays horizontal.
+        style["vertical_text"] = (lang.startswith("zh")
+                                  and self._settings.get("ocr_mode") == "vertical"
+                                  and self._settings.get("text_mode") != "duo")
         return style
 
     def _area_pairs_locked(self) -> list:
@@ -1170,6 +1176,12 @@ class Api:
                     # runs past the window instead of shrinking the text.
                     "box": (x1 - x0, y1 - y0),
                     "max_w": max(int(win_w - (x0 + offx) - 8), x1 - x0),
+                    # 縦書き grows LEFT from the box's right edge, up to the window's left
+                    "vertical": bool(style.get("vertical_text")),
+                    "max_left": max(int(x1 + offx) - 8, x1 - x0),
+                    # a box that grows past the window's bottom is moved up instead
+                    "max_bottom": top + win_h - 4,
+                    "min_top": top,
                 })
 
         # No boxes at all: one subtitle-style band lower-center of the window.
@@ -1219,6 +1231,8 @@ class Api:
                 # wrap to it and grow down within — never stretch past it to the right.
                 "box": (tw, th),
                 "max_w": tw,
+                "vertical": bool(style.get("vertical_text")),
+                "max_left": tw,
             })
         if not items:
             self._hide_overlay_locked()

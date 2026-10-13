@@ -90,11 +90,14 @@ Screen Capture -> OCR -> Translation -> Display
    me Lirian." -> 请叫我莉里安) and only then mapped or dropped (`scrub_leaks`); a transliterated name the
    model respells by one character (卢纳里亚 for our 鲁纳里亚), shortens (斯巴 for 斯巴尔) or
    swaps (西塞尔 for 塞西尔) is restored; katakana+達 is the plural (阿尔贝尔特们), and
-   fantasy staples are fixed terms (ゴーレム 魔像, ミスリル 秘银); a katakana run confirmed as a
+   fantasy staples are fixed terms (ゴーレム 魔像, ミスリル 秘银) — a katakana glossary
+term is not substituted at the head of a longer katakana run unless the rest is a word
+(エルフィーゼ stays a name, not 精灵伊泽; ギルドマスター still → 公会マスター); a katakana run confirmed as a
    name by strong evidence (honorific/title/・) is remembered for the session
    (`names._LEARNED_ZH`), so インパチェンス alone stays a name, not 不可逆地; a count the
    retry still gets wrong is swapped back when unambiguous (`fix_numbers`: 两亿八千万 ->
-   二千八百万 — 万/億 multiply the whole prefix)
+   二千八百万 — 万/億 multiply the whole prefix); Japanese words that are a different word in
+   Chinese are pinned (lone 机→桌子, lone 床→地板, 老公→老贵族 — "old lord", not "husband")
    (`restore_names`, fed by `protect(..., names_out)`); a word-initial consonant
    cluster reads as one sound (グレン 格伦, クレア 克莱亚 — not before ル, so クルミ stays). Each **sentence** is a
    translation-and-cache unit (`cache.SentenceCache`, splitting on `。！？` only —
@@ -116,7 +119,19 @@ Screen Capture -> OCR -> Translation -> Display
    index isn't built yet); kana-only residuals are still dropped (a hallucination's
    "entry" is a grammatical aux description).
 4. **Display** — renders translated text on an overlay window using the user's
-   configured mode, font, colors, and position.
+   configured mode, font, colors, and position. CJK text (Chinese output, Duo's
+   Japanese line) wraps at **≥3 characters a line**, balanced so no line is left with
+   1–2 glyphs (`overlay._cjk_line_width`): a tall vertical manga bubble used to give 1–2
+   characters a line, which read like vertical text. The box grows right to fit.
+   **Manga mode + Chinese** (`ocr_mode == "vertical"`, zh-CN/zh-TW, not Duo) draws the
+   translation **vertically** like the original (`overlay.render_vertical_image`, style
+   flag `vertical_text`): columns top-to-bottom, right-to-left, anchored at the region's
+   right edge and growing left; ≥3 cells a column, balanced; punctuation in its vertical
+   presentation form (。→︒, 「→﹁ — Noto Sans SC/TC carry them; PIL here has no raqm, so
+   glyphs are placed one by one); Latin/digit runs of 1–2 sit upright in one cell, longer
+   ones are turned 90°. Only regions taller than wide — a wide name plate or caption
+   stays horizontal. In Screen mode a box that would grow past the window's bottom edge
+   is shifted up to end at it (`overlay._keep_above`, item `max_bottom`).
 
 Each stage must be **swappable independently**: OCR engines sit behind a common
 interface, and the translation backend behind its own interface, even though we ship

@@ -119,6 +119,20 @@ _SYSTEM_ZH = (
 _SYSTEMS = {"en": _SYSTEM, "zh-CN": _SYSTEM_ZH, "zh-TW": _SYSTEM_ZH}
 
 
+def _invented(source: str, out: str) -> bool:
+    """A very short line (≤6 characters) that came back as a long sentence: the
+    model invented content (さて -> "after that battle, I finally understood…")."""
+    core = re.sub(r"[\s、。，,.!！?？…・~〜ー「」『』]+", "", source)
+    return 0 < len(core) <= 6 and len(out) > max(12, 4 * len(core))
+
+
+def _latin_share(text: str) -> float:
+    """Fraction of letters that are Latin (0 for an all-Chinese line)."""
+    latin = sum(c.isascii() and c.isalpha() for c in text)
+    letters = sum(c.isalpha() for c in text)
+    return latin / letters if letters else 0.0
+
+
 def _finish_zh(out: str, lang: str, names=()) -> str:
     """Last step for Chinese: zh-TW is the finished zh-CN text converted to Taiwan
     Traditional (see `kana_zh.to_traditional_tw`; `names` keep their name
@@ -573,6 +587,15 @@ class QwenTranslator(Translator):
                 # 1–2 character names are too short to match variants safely.
                 out = restore_names(out, [n for n in zh_names
                                           if isinstance(n, str) and len(n) >= 3])
+                # The particle と before a transliterated name was read as part of
+                # it: …？と拉修里は -> 托拉修里 (zh-TW 託拉修里).
+                for n in zh_names:
+                    if isinstance(n, str) and "と" + n in source and "托" + n not in source:
+                        out = out.replace("托" + n, n)
+            # A space the model put between two hanzi (哇啊啊啊 啊啊啊) is noise,
+            # unless the source itself had one (a spaced full name).
+            if not re.search(r"[ 　]", source):
+                out = re.sub(r"(?<=[一-鿿]) +(?=[一-鿿])", "", out)
             return _finish_zh(out, lang, zh_names)
         out = self._translate_line(source)
         # Whole-line-with-context is the primary path (it reads best — see the
@@ -604,16 +627,25 @@ class QwenTranslator(Translator):
         no empty or untranslated results and no Traditional-Chinese drift — only
         name leaks (honorific kana, Japanese-only kanji), which that fixes.
         """
+        if lang.startswith("zh"):
+            from .kana_zh import SHORT_LINES_ZH
+            core = re.sub(r"[\s、。，,.!！?？…・~〜ー]+", "", source)
+            if core in SHORT_LINES_ZH:
+                # A lone interjection: the model has nothing to translate and
+                # "continues the story" instead (さて -> a whole invented sentence).
+                return SHORT_LINES_ZH[core]
         out = self._generate_other(source, lang)
         if lang.startswith("zh"):
             from .kana_zh import (fix_numbers, fix_titles, numbers_mismatch, scrub_leaks,
                                   titles_mismatch, zh_leaked)
 
             def bad(o: str) -> bool:
-                # A leak, a changed count (十一 -> 十二) or a swapped rank word
-                # (子爵 -> 男爵) that the deterministic title fix can't repair.
+                # A leak, a changed count (十一 -> 十二), a swapped rank word
+                # (子爵 -> 男爵) that the deterministic title fix can't repair, or a
+                # short line that came back as a long one (invented content).
                 return (zh_leaked(source, o) or numbers_mismatch(source, o)
-                        or titles_mismatch(source, fix_titles(source, o)))
+                        or titles_mismatch(source, fix_titles(source, o))
+                        or _invented(source, o))
 
             out = fix_titles(source, out)
             if bad(out):
@@ -625,6 +657,11 @@ class QwenTranslator(Translator):
                 retry = fix_titles(source,
                                    self._generate_other(f"日语原文：「{source}」", lang))
                 if retry and not bad(retry):
+                    out = retry
+                elif retry and _latin_share(retry) < _latin_share(out):
+                    # Both leaked: keep the one that is more Chinese. ギリギリで躱す。 came
+                    # back as "barely dodge." then "barely闪避。" — keeping the first left
+                    # only "." once the English was cleaned out.
                     out = retry
             if numbers_mismatch(source, out):
                 out = fix_numbers(source, out)      # the retry repeated a wrong count

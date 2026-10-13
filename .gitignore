@@ -231,3 +231,4 @@ __marimo__/
 # into NihongoViewer/dict/ and shipped in the depot; not committed to git.
 /NihongoViewer/dict/
 /ManagaForTest
+/MangaForTest

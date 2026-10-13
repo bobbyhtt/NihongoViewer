@@ -194,6 +194,8 @@ def fix_zh_output(text: str) -> str:
     # 3. A small ッ/っ is a Japanese emphasis/cut-off mark (俺の…ッ♡) with no
     #    Chinese equivalent; the model sometimes copies it through. Drop it.
     text = text.replace("ッ", "").replace("っ", "")
+    # The glossary's 哥布林 came back as the feminine-looking 哥布琳 on one line.
+    text = text.replace("哥布琳", "哥布林")
     return _fix_zh_punct(to_simplified(text))
 
 
@@ -417,7 +419,7 @@ _EN_LEAK_ZH = {"something": "什么", "maid": "女仆", "maids": "女仆们",
                # Short replies the model sometimes answers in English (……そうよね -> "yeah").
                "yeah": "是啊", "yes": "是的", "yep": "嗯", "nope": "不", "hmm": "嗯",
                "well": "嗯", "sorry": "抱歉", "thanks": "谢谢", "right": "对吧",
-               "debut": "初次亮相",
+               "debut": "初次亮相", "barely": "勉强", "dodge": "闪避",
                # Negations: dropping one flips the meaning (弹回来 isn't 这样吗).
                "isn't": "不是", "not": "不", "don't": "不要", "can't": "不能", "won't": "不会", "shit": "可恶", "fuck": "妈的", "stick": "摇杆"}
 
@@ -440,6 +442,9 @@ def scrub_leaks(source: str, out: str) -> str:
     out = out.replace("،", "，").replace("؟", "？")
     out = re.sub(_FOREIGN, "", out)
     out = re.sub(r"[ァ-ヺー]+", lambda m: kata_to_zh(m.group(0)) or m.group(0), out)
+    # Stray hiragana (a verb ending left after a sounded-out word: 萨博り) has no
+    # Chinese reading; dropping it beats showing Japanese in a Chinese line.
+    out = re.sub(r"[ぁ-ゖ]+", "", out)
     src = (source or "").lower()
 
     def word(m: "re.Match") -> str:
@@ -474,6 +479,49 @@ GLOSSARY_ZH = {
     "ゴーレム": "魔像", "ミスリル": "秘银", "オリハルコン": "山铜", "ゴブリン": "哥布林",
     "スライム": "史莱姆", "ドワーフ": "矮人", "エルフ": "精灵", "ポーション": "药水",
     "指輪": "戒指",                         # was left as the Japanese word 指轮
+    # Street slang: ポンギ/ボンギ (Roppongi) isn't in the dictionary, so it read as a
+    # name (庞吉/邦吉); アバズレ ("slut") was transliterated by the model (阿巴兹莱).
+    # Japanese words that are a DIFFERENT word in Chinese: 老公 "elderly lord" read as
+    # "husband"; タウンハウス (a noble's city residence) read as a name, 塔恩豪斯.
+    "老公": "老贵族", "タウンハウス": "城中宅邸", "社食": "员工食堂",
+    # 元 = "former" in Japanese (元夫 ex-husband); Chinese says 前 (元夫 was copied).
+    "元夫": "前夫", "元妻": "前妻", "元婚約者": "前未婚夫",
+    # 怪我 is "injury" in Japanese but "blame me" in Chinese (怪我をすれば -> 如果我认罪);
+    # 後添い ("second wife") -> 后面跟着; ワゴンセール (bargain bin) -> 货车销售.
+    "怪我": "受伤", "後添い": "续弦", "ワゴンセール": "特价甩卖",
+    # 畏まりました ("certainly") -> 我害怕了 (畏 = "fear"); orc / Fenrir / reception
+    # room came out as 奥克 / 费恩里尔 / 接应室.
+    "畏まりました": "遵命", "かしこまりました": "遵命", "オーク": "兽人",
+    "フェンリル": "芬里尔", "応接室": "会客室",
+    # Batch 21: エスコート (a partner's escort) -> 披风 ("cape"); 命からがら ("barely
+    # escaping") -> 从命根处; 口篭る ("to falter") -> 叼住嘴 ("bit its mouth").
+    "エスコート": "陪同", "命からがら": "九死一生地",
+    "口篭も": "支吾", "口籠も": "支吾", "口ごも": "支吾", "口篭": "支吾", "口籠": "支吾",
+    # Batch 22 idioms: お召し物 ("clothes") -> 饭菜; 白い結婚 (an unconsummated marriage)
+    # -> 白色婚礼; 初耳 ("first I've heard") -> 外行; 真っ赤な嘘 ("outright lie") -> 红谎;
+    # すねたように -> 像鼻子一样; 悪い悪い ("sorry sorry") -> 糟糕糟糕.
+    "お召し物": "衣着", "白い結婚": "有名无实的婚姻", "初耳": "第一次听说",
+    "真っ赤な嘘": "彻头彻尾的谎言", "真っ赤な噓": "彻头彻尾的谎言",
+    "すねたように": "赌气似地", "拗ねたように": "赌气似地",
+    "百害あって一利無し": "有百害而无一利", "百害あって一利なし": "有百害而无一利",
+    "悪い悪い": "抱歉抱歉",
+    # (慰謝料 -> 赔偿金 was tried and removed: the word came out right but the model
+    # rebuilt the sentence around it and lost the meaning — net worse.)
+    # Fantasy terms the model dropped or swapped (ギルドへ -> "decided to go";
+    # 転移魔法 teleport -> 转生魔法 reincarnation); イエスマン read as a name.
+    "ギルド": "公会", "転移魔法": "传送魔法", "イエスマン": "应声虫",
+    # Misread badly: ぼったくり ("rip-off") -> 妓女和骗子; a child's kana おんみょーじ
+    # (陰陽師) -> 蠢货 ("idiot").
+    "ぼったくり": "宰客的黑店", "おんみょーじ": "阴阳师", "おんみょうじ": "阴阳师",
+    "露店": "摊位",                         # street stall; read as 妓女 ("prostitute")
+    # Manga set 2 (Oct 2026): おっぱい・ -> 屁 ("fart"), オパーイ read as a name,
+    # 常連さん -> 连桑 (the honorific clean-up made さん a name suffix), ヤリ手
+    # ("go-getter") -> 手淫.
+    "おっぱい": "胸部", "オッパイ": "胸部", "オパーイ": "胸部",
+    "常連さん": "常客", "常連": "常客", "ヤリ手": "高手",
+    # Slang verb the model sounded out (サボり -> 萨博り).
+    "サボり": "偷懒", "サボる": "偷懒", "サボって": "偷懒",
+    "ポンギ": "六本木", "ボンギ": "六本木", "アバズレ": "贱货",
     # Noble-romance staples: デビュタント came out as English "debut" (then dropped),
     # 貴族令嬢 as 贵公子小姐 ("young nobleman miss").
     "デビュタント": "社交界初次亮相", "貴族令嬢": "贵族千金",
@@ -484,10 +532,17 @@ GLOSSARY_ZH = {
 }
 
 # Rough katakana pronouns -> 你, only when standing alone (not オメーポンギ).
+SHORT_LINES_ZH = {
+    # Interjections that stand alone in a bubble; given just this, the model
+    # "continues the story" (さて -> a whole invented sentence) or guesses (算了).
+    "さて": "那么", "さあ": "来吧",
+    "どういたしまして": "不客气",          # came out 怎么一回事 ("what's going on")
+}
+
 SLANG_YOU_ZH = ("テメー", "テメエ", "オメー", "オメエ")
 
 
-_NAME_END = r"(?=[，。！？、…”」 的了和与是在而对说也就都还又却把被让给跟向从们]|$)"
+_NAME_END = r"(?=[，。！？、…”」 的了和与是在而对说也就都还又却把被让给跟向从们大小先君酱]|$)"
 
 
 def restore_names(out: str, names: list[str]) -> str:
@@ -514,6 +569,20 @@ def restore_names(out: str, names: list[str]) -> str:
                 # The shortened form must end where a name would: before punctuation
                 # or a common function word, so 斯巴达 (Sparta) isn't touched.
                 out = re.sub(re.escape(name[:-1]) + _NAME_END, name, out)
+            if name not in out and n >= 4:
+                # A middle character dropped (莱奥纳德 for 莱奥纳尔德): only for 4+
+                # character names, and only where the short form ends like a name.
+                import re
+                for i in range(1, n - 1):
+                    short = name[:i] + name[i + 1:]
+                    out = re.sub(re.escape(short) + _NAME_END, name, out)
+            if name not in out and n >= 3:
+                import re
+                # First character dropped (修莱 for 阿修莱): same end rule, plus the
+                # short form must not already follow the missing character.
+                out = re.sub("(?<!" + re.escape(name[0]) + ")" + re.escape(name[1:])
+                             + r"(?=[，。！？、…”」 的了和与是在而对说也就都还又却把被让给跟向从们大小先]|$)",
+                             name, out)
         i = 0
         while i <= len(out) - n:
             w = out[i:i + n]

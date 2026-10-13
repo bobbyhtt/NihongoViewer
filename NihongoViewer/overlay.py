@@ -231,6 +231,41 @@ def _wrap_to_width(text: str, font, max_width: int, probe: ImageDraw.ImageDraw) 
 _CJK = re.compile("[　-〿぀-ヿㇰ-ㇿ㐀-䶿一-鿿ｦ-ﾝ]")
 
 
+CJK_MIN_PER_LINE = 3
+
+
+def _cjk_line_width(text: str, font, avail_w: int, probe: ImageDraw.ImageDraw) -> int:
+    """Wrap width for CJK text (Chinese / Japanese): at least `CJK_MIN_PER_LINE`
+    characters a line, and lines balanced so the last isn't a lone character.
+
+    A vertical manga bubble is tall and narrow, so wrapping a Chinese translation to
+    its width gave 1–2 characters a line — which reads like vertical text and leaves
+    the reader unsure which way to read. Widening to 3+ characters (the box grows
+    right, as for a long English word) makes it plainly horizontal. Balancing
+    (9 characters at 4 a line -> 3/3/3, not 4/4/1) avoids a dangling last line.
+    English / space-delimited text is returned unchanged.
+    """
+    paras = [p for p in text.split("\n") if p]
+    if not paras or not all(_CJK.search(p) and " " not in p.strip() for p in paras):
+        return avail_w
+    cw = probe.textlength("中", font=font)            # CJK glyphs are full-width
+    if cw <= 0:
+        return avail_w
+    per = max(CJK_MIN_PER_LINE, int(avail_w // cw))   # characters that fit, at least 3
+    n = max(len(p) for p in paras)                    # the longest paragraph decides
+    if n <= per:
+        return int(n * cw + 0.999)                    # it all fits on one line
+    lines = -(-n // per)                              # ceil
+    per = max(CJK_MIN_PER_LINE, -(-n // lines))       # even out the lines
+    # Punctuation shifts the breaks (and may hang on a line end), so check the real
+    # wrap and widen until no line is left with 1–2 glyphs (著。 alone at the end).
+    for p in range(per, per + 8):
+        w = int(p * cw + 0.999)
+        if all(len(l) >= CJK_MIN_PER_LINE for l in _wrap_to_width(text, font, w, probe).split("\n") if l):
+            return w
+    return int(per * cw + 0.999)
+
+
 def _min_content_width(text: str, font, probe: ImageDraw.ImageDraw) -> int:
     """Width of the widest unit that must not be split.
 
@@ -321,6 +356,7 @@ def _render_fitted(text, family, size, fit_box, max_w, text_rgb, bg_rgb, bg_alph
     # an English word never breaks mid-word). We deliberately do NOT widen the wrap
     # to pack fewer lines: extra length flows downward, not rightward.
     avail_w = max(block_w - pad_x * 2, _min_content_width(text, font, probe))
+    avail_w = _cjk_line_width(text, font, avail_w, probe)
     wrapped = _wrap_to_width(text, font, avail_w, probe)
     tx0, ty0, tx1, ty1 = probe.multiline_textbbox((0, 0), wrapped, font=font, spacing=spacing)
     text_w, text_h = tx1 - tx0, ty1 - ty0
@@ -345,6 +381,141 @@ def _render_fitted(text, family, size, fit_box, max_w, text_rgb, bg_rgb, bg_alph
     return img
 
 
+# --- vertical (縦書き) Chinese for manga -------------------------------------------
+#
+# In manga mode (vertical OCR) a Chinese translation is set vertically like the
+# original: columns top-to-bottom, right-to-left, anchored at the bubble's right
+# edge and growing LEFT for more columns. Punctuation takes its vertical
+# presentation form (。-> ︒, 「 -> ﹁ …; Noto Sans SC/TC have them all). A Latin/digit
+# run of 1–2 characters sits upright in one cell (13, OK); a longer one is turned
+# 90° clockwise (SAF), the usual convention in vertical Chinese.
+
+_VERTICAL_FORMS = str.maketrans({
+    "，": "︐", "、": "︑", "。": "︒", "：": "︓", "；": "︔", "！": "︕", "？": "︖",
+    "…": "︙", "‥": "︰", "—": "︱", "ー": "︱", "～": "︴", "〜": "︴", "~": "︴",
+    "「": "﹁", "」": "﹂", "『": "﹃", "』": "﹄", "（": "︵", "）": "︶", "(": "︵", ")": "︶",
+    "【": "︻", "】": "︼", "《": "︽", "》": "︾", "〈": "︿", "〉": "﹀",
+    "“": "﹁", "”": "﹂", ",": "︐", "!": "︕", "?": "︖", ":": "︓", ";": "︔",
+})
+_LATIN_RUN = re.compile(r"[A-Za-z0-9%#&+\-./]+")
+
+
+def _vertical_cells(text: str) -> list[str]:
+    """Split a line into vertical cells: one CJK glyph each, Latin runs whole."""
+    text = re.sub(r"\.{2,}|…+", "…", text.replace(" ", ""))
+    cells, i = [], 0
+    while i < len(text):
+        m = _LATIN_RUN.match(text, i)
+        if m and m.group(0) not in ("-", ".", "/"):
+            cells.append(m.group(0))
+            i = m.end()
+        else:
+            cells.append(text[i].translate(_VERTICAL_FORMS))
+            i += 1
+    return cells
+
+
+def _vertical_columns(cells: list[str], per: int) -> list[list[str]]:
+    """Cut cells into columns of `per`; a closing mark never starts a column."""
+    cols: list[list[str]] = []
+    cur: list[str] = []
+    closing = set("︐︑︒︓︔︕︖﹂﹄︶︼︾﹀︙")
+    for c in cells:
+        if len(cur) >= per and c not in closing:
+            cols.append(cur)
+            cur = []
+        cur.append(c)
+    if cur:
+        cols.append(cur)
+    return cols
+
+
+def render_vertical_image(text: str, style: dict, fit_box: tuple[int, int],
+                          max_left: int | None = None) -> Image.Image:
+    """Render CJK `text` vertically (縦書き) into a box at least `fit_box`.
+
+    Columns run right-to-left; each holds as many cells as the box height allows
+    (at least CJK_MIN_PER_LINE), balanced so no column is left with 1–2 cells. The
+    image is meant to be placed with its RIGHT edge on the region's right edge
+    (`compose_canvas` does that for "vertical" items); `max_left` caps how far left
+    it may grow (the room to the window's left edge).
+    """
+    size = int(style.get("size", 18))
+    font = _resolve_font(style.get("font", "Noto Sans SC"), size)
+    text_rgb = _hex_to_rgb(style.get("text_color", "#ffffff"))
+    bg_rgb = _hex_to_rgb(style.get("bg_color", "#111111"))
+    bg_alpha = round(float(style.get("opacity", 80)) / 100 * 255)
+    pad = 6
+    cell = int(size * 1.18)          # row height and column width
+    gap = max(2, size // 6)          # space between columns
+
+    paras = [_vertical_cells(p) for p in (text or " ").split("\n") if p.strip()]
+    if not paras:
+        paras = [[" "]]
+    box_w, box_h = max(int(fit_box[0]), cell + pad * 2), max(int(fit_box[1]), cell + pad * 2)
+    fit = max(CJK_MIN_PER_LINE, (box_h - pad * 2) // cell)
+    columns: list[list[str]] = []
+    for cells in paras:
+        n = len(cells)
+        per = fit
+        if n > per:
+            per = max(CJK_MIN_PER_LINE, -(-n // -(-n // per)))   # balance the columns
+            for p in range(per, per + 8):                        # no column of 1–2 cells
+                cols = _vertical_columns(cells, p)
+                if all(len(c) >= min(CJK_MIN_PER_LINE, n) for c in cols):
+                    per = p
+                    break
+        columns += _vertical_columns(cells, per)
+
+    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+
+    def cell_h(c: str) -> int:
+        # a turned Latin run is as tall as the run is wide
+        if len(c) > 2 and _LATIN_RUN.fullmatch(c):
+            return int(probe.textlength(c, font=font)) + 2
+        return cell
+
+    col_h = max(sum(cell_h(c) for c in col) for col in columns)
+    w = max(box_w, len(columns) * cell + (len(columns) - 1) * gap + pad * 2)
+    if max_left:
+        w = min(w, max(int(max_left), box_w))
+    h = max(box_h, col_h + pad * 2)
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([0, 0, w - 1, h - 1], fill=(*bg_rgb, bg_alpha))
+    fill = (*text_rgb, 255)
+    x = w - pad - cell                           # first column on the right
+    for col in columns:
+        y = pad
+        for c in col:
+            if len(c) > 2 and _LATIN_RUN.fullmatch(c):
+                # a long Latin/digit run: turned 90° clockwise, as one tall cell
+                tw = int(draw.textlength(c, font=font)) + 2
+                tile = Image.new("RGBA", (tw, cell), (0, 0, 0, 0))
+                ImageDraw.Draw(tile).text((tw / 2, cell / 2), c, font=font, fill=fill, anchor="mm")
+                tile = tile.rotate(-90, expand=True)
+                img.alpha_composite(tile, (int(x + (cell - tile.width) / 2), int(y)))
+                y += tile.height
+            else:
+                f = font if len(c) == 1 else _resolve_font(style.get("font", "Noto Sans SC"), max(8, int(size * 0.62)))
+                draw.text((x + cell / 2, y + cell / 2), c, font=f, fill=fill, anchor="mm")
+                y += cell
+        x -= cell + gap
+    return img
+
+
+def _keep_above(y: int, h: int, it: dict) -> int:
+    """Shift a box up so it doesn't run past `max_bottom` (the window's bottom edge).
+
+    Boxes grow downward to fit their text, so a bubble near the bottom of the window
+    (or a long translation) could push the text off-screen. Never above `min_top`.
+    """
+    mb = it.get("max_bottom")
+    if mb is not None and y + h > int(mb):
+        y = max(int(it.get("min_top", -10 ** 9)), int(mb) - h)
+    return y
+
+
 def compose_canvas(items: list[dict], style: dict):
     """Render each item to its own tile and composite onto one transparent canvas.
 
@@ -357,9 +528,18 @@ def compose_canvas(items: list[dict], style: dict):
         text = (it.get("text") or "").strip()
         if not text:
             continue
+        box = it.get("box")
+        if it.get("vertical") and box and box[1] >= box[0]:
+            # 縦書き: right edge on the region's right edge, growing left. Only for a
+            # region taller than wide — a horizontal name plate / caption in a manga
+            # (柿崎景家 in a wide box) stays horizontal like the original.
+            tile = render_vertical_image(text, style, it["box"], max_left=it.get("max_left"))
+            tiles.append((tile, int(it["x"]) + int(it["box"][0]) - tile.width,
+                          _keep_above(int(it["y"]), tile.height, it)))
+            continue
         tile = render_text_image(text, style, min_size=it.get("cover"),
                                  fit_box=it.get("box"), max_w=it.get("max_w"))
-        tiles.append((tile, int(it["x"]), int(it["y"])))
+        tiles.append((tile, int(it["x"]), _keep_above(int(it["y"]), tile.height, it)))
     if not tiles:
         return None, 0, 0
 

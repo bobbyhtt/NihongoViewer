@@ -626,6 +626,10 @@ def _unknown_name_zh(run: str) -> bool:
     return not _is_word_zh(_to_fullwidth(run))
 
 
+_FULLWIDTH_ALNUM = str.maketrans(
+    "ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ０１２３４５６７８９",
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
+
 # Katakana runs already confirmed as names this session (see `_protect_zh`).
 _LEARNED_ZH: set[str] = set()
 
@@ -662,13 +666,28 @@ def _protect_zh(text: str, overrides: dict, names_out: list | None = None) -> st
         if key in text:
             text = text.replace(key, overrides[key])
 
+    # Full-width Latin letters / digits -> ASCII: ＳＴＲ (a game stat) was read as
+    # the name 斯特拉; as STR the model keeps it.
+    text = text.translate(_FULLWIDTH_ALNUM)
+
     # 0a) Fixed Chinese terms (グリフォン 狮鹫, 屋敷 宅邸) and katakana slang
     #     pronouns (テメー -> 你) the model leaves as kana or renders differently
     #     per line. Longest first; a names.json entry for the same key wins.
     from .kana_zh import GLOSSARY_ZH, SLANG_YOU_ZH
     for key in sorted(GLOSSARY_ZH, key=len, reverse=True):
         if key in text and key not in overrides:
-            text = text.replace(key, GLOSSARY_ZH[key])
+            # A katakana term must not be the head of a longer katakana NAME: エルフ
+            # inside エルフィーゼ came out 精灵伊泽 ("Elf Ize"). A compound whose rest is
+            # a word (ギルドマスター, ゴブリンキング) still gets the term.
+            def _sub(m, key=key):
+                rest = m.group(1)
+                if rest and not (_dictionary_ready() and _is_headword(rest.rstrip("ー") or rest)):
+                    return m.group(0)
+                return GLOSSARY_ZH[key] + rest
+            if re.match(r"[ァ-ヺー]", key[-1]):
+                text = re.sub(re.escape(key) + r"([ァ-ヺー]*)", _sub, text)
+            else:
+                text = text.replace(key, GLOSSARY_ZH[key])
     for key in SLANG_YOU_ZH:
         text = re.sub(re.escape(key) + r"(?![ァ-ヺー])", "你", text)
 
@@ -677,8 +696,11 @@ def _protect_zh(text: str, overrides: dict, names_out: list | None = None) -> st
     # honorific clean-up turns into 们.
     text = re.sub(r"(?<=[ァ-ヺー])達", "たち", text)
 
-    # A lone 机 is "desk" in Japanese but "machine" in Chinese (机の上 -> 在机器上).
+    # A lone 机 is "desk" in Japanese but "machine" in Chinese (机の上 -> 在机器上);
+    # a lone 床 is "floor" in Japanese but "bed" in Chinese (床に転がった -> 滚到床上).
+    # Compounds (机械, 起床, 病床) keep their Chinese meaning.
     text = re.sub(r"(?<![一-龯])机(?![一-龯])", "桌子", text)
+    text = re.sub(r"(?<![一-龯])床(?![一-龯])", "地板", text)
 
     # 0b) A bare katakana line is a character-name plate.
     label = _label_name(text, overrides, to_name=kata_to_zh)
